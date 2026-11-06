@@ -103,7 +103,8 @@ def load(key):
                 bundle = {'processor': processor, 'model': model}
             bundle.update(key=key, device='cuda' if cuda else 'cpu', precision=mode or (('bf16' if native_bf16 else 'fp16') if cuda else 'fp32'))
         except Exception as exc:  # download, memory or version problems are reported, never simulated
-            _state['errors'][key] = f"{spec['repo']} could not be loaded: {exc}"[:400]
+            cause = f' ({exc.__cause__!r})' if exc.__cause__ else ''
+            _state['errors'][key] = f"{spec['repo']} could not be loaded: {exc}{cause}"[:400]
             raise Unavailable(_state['errors'][key]) from exc
         _state['load_seconds'][key] = round(time.perf_counter() - started, 2)
         _state.update(key=key, bundle=bundle)
