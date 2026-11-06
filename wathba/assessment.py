@@ -326,6 +326,16 @@ def tracking_flags(samples, primary):
     return flags
 
 
+def cycle_matches_reference(cycle, samples, reference, coverage, primary):
+    """Keep observed motion separate from an assessable, matched repetition."""
+    if not reference or coverage < 70 or cycle.get("findings"):
+        return False
+    required = list(reference["templates"])
+    if primary == "hip_height":
+        required.append("knee_angle")
+    return all(waveform(samples, cycle, name) is not None for name in required)
+
+
 def assess(samples, plan, reference=None, illustrative=False):
     primary = plan.primary_feature
     observed = [float(value(s, primary)) for s in samples if valid(s, primary)]
@@ -388,6 +398,15 @@ def assess(samples, plan, reference=None, illustrative=False):
                                      "severity": "red" if float(np.mean(delta/np.maximum(allowed,.0001)))>2 else "yellow",
                                      "description": description})
         cycle["findings"] = findings
+        # A detected cycle is not automatically a matched repetition. Missing
+        # comparison features must never turn into a false success.
+        required = list(reference["templates"]) if reference else []
+        assessable = bool(reference and len(observed) / len(samples) >= .70 and
+                          all(waveform(samples, cycle, name) is not None for name in required))
+        if primary == "hip_height":
+            assessable = assessable and waveform(samples, cycle, "knee_angle") is not None
+        cycle["accepted"] = cycle_matches_reference(cycle, samples, reference, 100 * len(observed) / len(samples), primary)
+        cycle["comparison_assessable"] = bool(assessable)
         if findings:
             cue_text = []
             for finding in findings:
@@ -403,7 +422,8 @@ def assess(samples, plan, reference=None, illustrative=False):
     for i, flag in enumerate(flags):
         flag.update(id=f"flag-{i + 1}", status="Pending", comment="")
     knee_angles = [value(s, "knee_angle") for s in samples if valid(s, "knee_angle")]
-    return {"repetitions": len(cycles), "cycles": cycles, "flags": flags, "primary_feature": primary,
+    return {"repetitions": len(cycles), "accepted_repetitions": sum(c["accepted"] for c in cycles),
+            "cycles": cycles, "flags": flags, "primary_feature": primary,
             "feature_label": FEATURES[primary].label, "feature_unit": FEATURES[primary].unit,
             "coverage": round(100 * len(observed) / len(samples), 1),
             "angle_min": round(min(knee_angles), 1) if knee_angles else None,

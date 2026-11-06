@@ -25,6 +25,8 @@ from .pose_schema import LEGACY_MEDIAPIPE_ENGINE, MODELS, PIPELINE, replay_rows,
 from .media import configure_ffmpeg, open_video
 from .reporting import bundle
 from .analysis import session_analysis
+from .assessment import cycle_matches_reference
+from .scoring import counted_repetitions
 
 BASE = Path(__file__).resolve().parents[1]
 LOCK = threading.Lock()
@@ -101,12 +103,23 @@ def prepare_library():
 
 def public_session(s):
     ref_source=None
+    cycles=s['cycles']
+    # Earlier saved reports predate the explicit accepted count. Evaluate their
+    # existing cycles against their original reference rather than returning 0.
+    if 'accepted_repetitions' not in s and s.get('reference_model'):
+        try:
+            reference=storage.load_reference(s['plan']['reference_id'])
+            cycles=[{**c,'accepted':cycle_matches_reference(c,s['samples'],reference,s['coverage'],s['plan']['primary_feature']),
+                     'comparison_assessable':cycle_matches_reference({**c,'findings':[]},s['samples'],reference,s['coverage'],s['plan']['primary_feature'])} for c in cycles]
+        except (OSError,ValueError,KeyError):pass
     if s['plan'].get('reference_id'):
         try:ref_source=media_url(storage.load(s['plan']['reference_id'])['source_video'])
         except (OSError,ValueError):pass
     return {'id':s['id'],'exercise':s['exercise'],'side':s['plan']['side'],'view':s['plan']['view'],
             'target':s['plan']['target_repetitions'],'repetitions':s['repetitions'],'duration':s['duration'],
-            'created_at':s['created_at'],'coverage':s['coverage'],'match_score':s.get('match_score',{}),'cycles':s['cycles'],
+            'accepted_repetitions':s.get('accepted_repetitions',sum(c.get('accepted') is True for c in cycles)),
+            'counted_repetitions':s.get('counted_repetitions',counted_repetitions(cycles,s.get('match_score',{}))),
+            'created_at':s['created_at'],'coverage':s['coverage'],'match_score':s.get('match_score',{}),'cycles':cycles,
             'model':s['model'],'source':media_url(s['source_video']),'annotated':media_url(s['annotated_video']),
             'feedback':s['feedback'],'flags':[{**f,'clip':media_url(f['clip']),**{k:media_url(f[k]) for k in ('picture','reference_picture') if f.get(k)}} for f in s['flags']],
             'motion_analysis':session_analysis(s),'reference':s.get('reference_model'),'reference_source':ref_source,'report':media_url(storage.folder(s['id'])/'physio-report.html'),
@@ -133,6 +146,10 @@ class CheckInRequest(BaseModel):
 
 class FeedbackRequest(BaseModel):
     text: str = Field(max_length=5000)
+
+
+class WorkoutCheckInRequest(CheckInRequest):
+    session_ids: list[str] = Field(min_length=1, max_length=50)
 
 
 class AiRequest(BaseModel):
@@ -280,6 +297,17 @@ def create_app():
             remote.persist_session(session_id)
             return public_session(s)
         except (OSError,ValueError):raise HTTPException(404,'Session not found.')
+
+    @app.post('/api/workout/check-in')
+    def update_workout_check_in(request: WorkoutCheckInRequest):
+        answers=request.model_dump(exclude={'session_ids'})
+        answers.update(pain_locations=list(dict.fromkeys(request.pain_locations)),notes=request.notes.strip())
+        try:
+            sessions=storage.workout_check_in(request.session_ids,answers)
+        except (OSError,ValueError) as exc:
+            raise HTTPException(400,'All workout recordings must exist and belong to patient exercises.') from exc
+        for session in sessions:remote.persist_session(session['id'])
+        return {'session_ids':[s['id'] for s in sessions],'check_in':sessions[-1]['patient_check_in']}
 
     @app.post('/api/session/{session_id}/feedback')
     def update_feedback(session_id:str,request: FeedbackRequest):

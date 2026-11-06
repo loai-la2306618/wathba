@@ -7,6 +7,14 @@ import numpy as np
 from .assessment import align_curves, waveform
 
 
+def counted_repetitions(cycles, match_score):
+    """Progress accepts assessable repetitions at or above 60%; correctness is separate."""
+    scores = {r["rep"]: r.get("value") for r in match_score.get("per_repetition", [])}
+    return sum(c.get("comparison_assessable", False) and
+               isinstance(scores.get(c["rep"]), (int, float)) and scores[c["rep"]] >= 60
+               for c in cycles)
+
+
 def reference_match(samples, cycles, reference, coverage):
     if not reference or not cycles or coverage < 70:
         return {"value": None, "label": "Reference match", "reason": "A reference, complete repetitions and clear tracking are needed.",

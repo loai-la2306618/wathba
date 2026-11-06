@@ -8,7 +8,7 @@ from pathlib import Path
 from . import storage
 from .assessment import assess, fit_reference
 from .media import clip_video
-from .scoring import reference_match
+from .scoring import reference_match, counted_repetitions
 
 
 def evidence_picture(source, destination, timestamp):
@@ -25,6 +25,7 @@ def evidence_picture(source, destination, timestamp):
 def finish(session_id, directory, samples, plan, source, annotated, duration, label, symptoms, pain, synthetic, elapsed, reference=None):
     metrics = assess(samples, plan, reference, illustrative=synthetic)
     metrics["match_score"] = reference_match(samples, metrics["cycles"], reference, metrics["coverage"])
+    metrics["counted_repetitions"] = counted_repetitions(metrics["cycles"], metrics["match_score"])
     ref_session = None
     if reference and not reference.get('synthetic'):
         try:
