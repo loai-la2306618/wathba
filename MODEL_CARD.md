@@ -1,0 +1,17 @@
+# Wathba motion comparison model
+
+The primary patient app uses **Google MediaPipe Pose Landmarker Full**, pretrained, in the browser (`@mediapipe/tasks-vision@0.10.32`, Full float16 model version 1). It produces 33 landmarks with visibility estimates. Runtime/weights are locally served and pinned by hash. It is not the OpenCV ONNX port and is not a fine-tuned ACL model. The optional old ViTPose CLI is separate.
+
+The therapist-designated video is the recorded comparison reference and demonstration. A separate patient recording or camera clip is evaluated. No synthetic mannequin/reference is used in the main flow. The current profile is a frontal squat with left leg tracking; Jump is available as a separate demonstration/recording profile with both-foot displacement tracking. It is not scored against the squat reference; without a separately fitted Jump reference, form comparison is withheld. Neither profile is clinically validated.
+
+MediaPipe landmarks map to COCO-17 for the existing motion feature code; original 33-point samples support video/skeleton replay. Frontal pelvic descent is normalised with a static robust torso scale (75th percentile of reliable projected torso lengths per recording). This prevents instantaneous torso foreshortening from creating/inverting squat cycles. Hip-height waveforms subtract their start value to reduce body-proportion offsets. Camera view and exercise must match; these remain approximate camera measurements.
+
+The statistical reference model fits 61-point phase curves, median/MAD variation, excursion and cycle duration. Constrained dynamic time warping compares movement patterns. Threshold exceedances are observations, not diagnoses. The selected reference ID and source role are preserved in report provenance.
+
+Reference match averages 80% aligned movement similarity and 20% tempo similarity across assessable repetitions. It is withheld without a reference, complete cycles or 70% coverage. The score formula is not clinically calibrated. Landmark coverage indicates usable primary-feature observations, not pose accuracy or exercise correctness. No healing, force, strength, load symmetry or return-to-sport claim is made.
+
+Verification: 35 automated tests; actual MediaPipe inference on the designated therapist clip (four complete cycles) and separate full patient squat recording (20 observed complete cycles). Chromium and WebKit upload/replay flows were checked. Chromium live camera integration was checked using actual patient footage as a simulated camera stream. None of these establish clinical sensitivity/specificity or generalisation across ACL patients.
+
+Data and reports remain in the shared private prototype workspace. Camera recordings are normalised and re-analysed after finishing for accurate media timestamps; the provisional live counter can differ from the final count. Physio feedback is stored with the session. No external language model produces reports. Paid HF hosting remains paused until explicitly resumed.
+
+Demo schedule: four sessions weekly (Mon/Tue/Thu/Sat, Doha); completion measures recorded participation, not recovery. Reports include per-finding parts, tolerances, annotated evidence clips and paired images. Live colour feedback is reference-relative, with unassessed parts grey. Untrackable recordings are saved without form scores. No external exercise-recognition dataset was added or used.

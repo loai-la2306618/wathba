@@ -1,0 +1,8 @@
+gradio==5.49.1
+fastapi>=0.115,<1
+uvicorn>=0.32,<1
+python-multipart>=0.0.18
+numpy>=1.26,<3
+opencv-python-headless>=4.10,<5
+scipy>=1.14,<2
+imageio-ffmpeg==0.6.0

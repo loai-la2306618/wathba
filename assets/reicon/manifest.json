@@ -1,0 +1,216 @@
+{
+  "source": "https://github.com/dqev/reicon",
+  "commit": "ac1c3a828b0af57e1443b171ec932b9bb30f8cf8",
+  "icons": [
+    {
+      "name": "arrow-left",
+      "category": "arrows",
+      "weight": "Outline",
+      "sha256": "47ddd23c7e569741033577d30568a6bffcca9ef9b0cdedba811989d5c61f968f"
+    },
+    {
+      "name": "arrow-right-up",
+      "category": "arrows",
+      "weight": "Outline",
+      "sha256": "8200cc02f74b7358be1be262acb69008b02362f3af614bdf05f8ac81016730ea"
+    },
+    {
+      "name": "repeat",
+      "category": "video",
+      "weight": "Outline",
+      "sha256": "5eebe4ac165cc143ddd1e1fca6e19ea0d1bb17f5ae13de96f0fd618480af25c3"
+    },
+    {
+      "name": "clock",
+      "category": "time",
+      "weight": "Outline",
+      "sha256": "e479d386deeca6a8f6b36565b4ea4d8ae8919f1e67ff6f4578420c8fe7cd65c4"
+    },
+    {
+      "name": "accessibility",
+      "category": "ui",
+      "weight": "Outline",
+      "sha256": "04821c0189569a699151e7808d83ffa61b2ae279a263fd3e7e0cbea086b23400"
+    },
+    {
+      "name": "user-scan",
+      "category": "users",
+      "weight": "Outline",
+      "sha256": "fde638ce20d9b41c55145b21624ed0afa390b6ba89b5d52a64078e6320805f67"
+    },
+    {
+      "name": "camera",
+      "category": "video",
+      "weight": "Outline",
+      "sha256": "efd528ce16d33342f61b34d4ec6183352f4229ed1ba84ca94ad209960fe3d117"
+    },
+    {
+      "name": "pause",
+      "category": "video",
+      "weight": "Outline",
+      "sha256": "428fdb8069d2c78af81f94fc71040e4403e0ed5037285b64c96f32f29574473e"
+    },
+    {
+      "name": "play",
+      "category": "video",
+      "weight": "Outline",
+      "sha256": "627e804e3ca31774c7e51543042ee0bf198dc6b520c072c64a42cdf435a94e7a"
+    },
+    {
+      "name": "skip-next",
+      "category": "video",
+      "weight": "Outline",
+      "sha256": "8035ee0ed6e80178d4340062565aebc2951a3c79917d003fced07250606f5bc3"
+    },
+    {
+      "name": "skip-prev",
+      "category": "video",
+      "weight": "Outline",
+      "sha256": "b10fbee78bdfbde5eb64d45ddf759916badca7343c1c1afd2a86324cf54f1625"
+    },
+    {
+      "name": "check-circle",
+      "category": "ui",
+      "weight": "Outline",
+      "sha256": "269cbd9e6e0a391dcf47a8a259504b903be4a73316a638d229c810a21a94e314"
+    },
+    {
+      "name": "check",
+      "category": "ui",
+      "weight": "Outline",
+      "sha256": "6ccd143f54beb4539485af4b75a0ba5db460c493a97822538b4cd8674a280d9a"
+    },
+    {
+      "name": "info-circle",
+      "category": "ui",
+      "weight": "Outline",
+      "sha256": "c258727d1a4436ec36c62b824c39768999a54962c24e9062100cc5915ff985be"
+    },
+    {
+      "name": "chat-round-line",
+      "category": "messages",
+      "weight": "Outline",
+      "sha256": "ff1f9c67c3b38661e8feef5ac53a1c64cd9628014448524f421724c6a2a10fd4"
+    },
+    {
+      "name": "sparkles",
+      "category": "ui",
+      "weight": "Outline",
+      "sha256": "0b37645992d3dd47dedc76c67a7294aaf5a403758ca4b5c9a35b87941cdef75b"
+    },
+    {
+      "name": "upload",
+      "category": "arrows-action",
+      "weight": "Outline",
+      "sha256": "8b560b6ccd5390b85c9e6133f064f70257aa0bc37657ee3bbb23f92d440ae75f"
+    },
+    {
+      "name": "download",
+      "category": "arrows-action",
+      "weight": "Outline",
+      "sha256": "d3c78ce7d3d65091ed03d26794ecc905e872e2bea74a6638b2e052c9901cfd3a"
+    },
+    {
+      "name": "document-text",
+      "category": "newicons",
+      "weight": "Outline",
+      "sha256": "50961a9797e5f7736bcb8722bfc7a8c7ea58961b103eafabbe833efa15972002"
+    },
+    {
+      "name": "stop",
+      "category": "video",
+      "weight": "Outline",
+      "sha256": "18fc732523e9133f6d65308086b6b2f62ae0e26ccfcd5ccd243189864a440a18"
+    },
+    {
+      "name": "record-circle",
+      "category": "call",
+      "weight": "Outline",
+      "sha256": "715ca41c014309fd1a38087c6db2970ae103df5d255d44dfe267dd1e048ea1c0"
+    },
+    {
+      "name": "target",
+      "category": "ui",
+      "weight": "Outline",
+      "sha256": "68081a132fb41f32ce9e1dcdbc28eeee9c94c49c113685ab37098cf8164513b6"
+    },
+    {
+      "name": "chart-line",
+      "category": "business",
+      "weight": "Outline",
+      "sha256": "e5b5fbadc5bf6b68d4faa3577ae4caaabd29c81796c322ac12b623b06095c500"
+    },
+    {
+      "name": "home",
+      "category": "ui",
+      "weight": "Outline",
+      "sha256": "4271fcccffc727681ed82ff0d2b328f8075fe269c29bcaabf3436df1f3fd456e"
+    },
+    {
+      "name": "shield-check",
+      "category": "security",
+      "weight": "Outline",
+      "sha256": "2b39132d6119410fccc0e5144a551df66fe342d2a24f8f6e68332835fe3516c5"
+    },
+    {
+      "name": "user",
+      "category": "users",
+      "weight": "Outline",
+      "sha256": "ecfb53a318904d5c14f809af26b82dc74a6b3e8fb5adbae0edfea009683ed7a0"
+    },
+    {
+      "name": "search",
+      "category": "search",
+      "weight": "Outline",
+      "sha256": "e6187b4a962005bac7b49431d69b51664abf0826546fd812e20e1384015f6313"
+    },
+    {
+      "name": "share",
+      "category": "ui",
+      "weight": "Outline",
+      "sha256": "e0e75b3f6b9dd346013371089a3d6a622b04d88ca88260e433f564f216a10f8f"
+    },
+    {
+      "name": "settings",
+      "category": "settings",
+      "weight": "Outline",
+      "sha256": "78580cd511e29eaa2a79cbe1e71132aa6031b91a7e16de5fe2152e559034b07b"
+    },
+    {
+      "name": "arrow-right",
+      "category": "arrows",
+      "weight": "Outline",
+      "sha256": "d73b9a3316eb493363236dcb10ac4916d05a63c34c41463f73edef417a7743ef"
+    },
+    {
+      "name": "heart",
+      "category": "like",
+      "weight": "Outline",
+      "sha256": "fb1cc3df39e6d46971e79dcc0e7ad95cb91e483c4453eb260601c99b9d47f446"
+    },
+    {
+      "name": "calendar",
+      "category": "time",
+      "weight": "Outline",
+      "sha256": "9c58ecb217f2d22c4775c2030be58bf97dae0643a955e70a87cd40e544f4cf3c"
+    },
+    {
+      "name": "notes",
+      "category": "notes",
+      "weight": "Outline",
+      "sha256": "ad2b3a69ab603e031b1b3c9ad02c89cb8d97ae99cfa2b3d7ec41074b8e5f59c3"
+    },
+    {
+      "name": "xmark",
+      "category": "ui",
+      "weight": "Outline",
+      "sha256": "fbf3312a1c918d162ee6b59f527a89757a22835d224db97403f1382ad31bec1b"
+    },
+    {
+      "name": "more-h",
+      "category": "ui",
+      "weight": "Outline",
+      "sha256": "da2fe87896ab124bfa73de8c0e724c4a01957f0bbbcab5a861a35950ca0d8811"
+    }
+  ]
+}

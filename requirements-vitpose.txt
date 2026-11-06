@@ -1,0 +1,6 @@
+# Optional legacy/server-side pose pipeline. The patient browser app uses MediaPipe.
+--extra-index-url https://download.pytorch.org/whl/cpu
+-r requirements.txt
+transformers==4.57.1
+torch>=2.6,<3
+torchvision>=0.21,<1

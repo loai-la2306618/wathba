@@ -1,0 +1,17 @@
+.venv/
+.wathba/
+__pycache__/
+.pytest_cache/
+*.pyc
+.DS_Store
+.env
+artifacts/
+uv.lock
+.ruff_cache/
+.vercel/
+.env.*
+!.env.example
+*.log
+*.egg-info/
+build/
+dist/
