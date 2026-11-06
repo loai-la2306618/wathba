@@ -84,12 +84,15 @@ def load(key):
             import transformers
             offline = os.getenv('WATHBA_OFFLINE', '0') == '1'
             cuda = torch.cuda.is_available()
+            # Older GPUs such as the T4 only emulate bf16, which is very slow.
+            native_bf16 = cuda and torch.cuda.is_bf16_supported(including_emulation=False)
+            half = torch.bfloat16 if native_bf16 else torch.float16
             kwargs = {'revision': spec['revision'], 'local_files_only': offline,
-                      'dtype': torch.bfloat16 if cuda else torch.float32, 'device_map': 'cuda:0' if cuda else 'cpu'}
+                      'dtype': half if cuda else torch.float32, 'device_map': 'cuda:0' if cuda else 'cpu'}
             mode = quantize(key)
             if mode == 'nf4':
                 kwargs['quantization_config'] = transformers.BitsAndBytesConfig(
-                    load_in_4bit=True, bnb_4bit_quant_type='nf4', bnb_4bit_compute_dtype=torch.bfloat16, bnb_4bit_use_double_quant=True)
+                    load_in_4bit=True, bnb_4bit_quant_type='nf4', bnb_4bit_compute_dtype=half, bnb_4bit_use_double_quant=True)
             if spec['kind'] == 'text':
                 tokenizer = transformers.AutoTokenizer.from_pretrained(spec['repo'], revision=spec['revision'], local_files_only=offline)
                 model = transformers.AutoModelForCausalLM.from_pretrained(spec['repo'], **kwargs).eval()
@@ -98,7 +101,7 @@ def load(key):
                 processor = transformers.AutoProcessor.from_pretrained(spec['repo'], revision=spec['revision'], local_files_only=offline)
                 model = transformers.AutoModelForImageTextToText.from_pretrained(spec['repo'], **kwargs).eval()
                 bundle = {'processor': processor, 'model': model}
-            bundle.update(key=key, device='cuda' if cuda else 'cpu', precision=mode or ('bf16' if cuda else 'fp32'))
+            bundle.update(key=key, device='cuda' if cuda else 'cpu', precision=mode or (('bf16' if native_bf16 else 'fp16') if cuda else 'fp32'))
         except Exception as exc:  # download, memory or version problems are reported, never simulated
             _state['errors'][key] = f"{spec['repo']} could not be loaded: {exc}"[:400]
             raise Unavailable(_state['errors'][key]) from exc
