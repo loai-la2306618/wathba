@@ -106,12 +106,14 @@ VISION_PROMPT = {
 BANNED = {
     'en': [r'\bdiagnos', r'\btorn\b', r'\btear\b', r'\bruptur', r'\bhealed\b', r'\bfully recovered\b', r'\bready to return\b',
            r'\bsurgery\b', r'\bdamage', r'\bligament is\b', r'\bperfectly safe\b', r'\byou are safe\b'],
-    'ar': [r'تشخيص', r'تمزق', r'ممزق', r'شُفي|شفي|التأم', r'تعافيت تمام', r'جراحة', r'آمن تمام', r'جاهز للعودة', r'تلف'],
+    'ar': [r'تشخيص', r'تمزق', r'ممزق', r'شُفي|شفي|التأم', r'تعافيت تمام', r'جراحة', r'آمن تمام', r'جاهز للعودة',
+           # Whole word, so ordinary words like مختلف ("different") are not read as damage.
+           r'(?<![؀-ۿ])[وف]?(?:لل|[بل]?(?:ال)?|[أيتنم])تلف(?:ا|ه|ها|هم|ك|ي)?(?![؀-ۿ])', r'(?<![؀-ۿ])[وف]?أتلفت(?![؀-ۿ])'],
 }
 PHYSIO = {'en': r'physio|therapist|clinician|doctor',
           'ar': r'أخصائي|اخصائي|معالج|مختص|العلاج الطبيعي|طبيب'}
-CONTACT = {'en': r'contact|talk|speak|tell|consult|ask|check with|let .* know|reach out|call|guidance|approv',
-           'ar': r'تواصل|اتصل|استشر|استشار|أخبر|اسأل|راجع|أبلغ|كلم|اطلب|طلب|يطلب|تحدث|توجيه|موافق'}
+CONTACT = {'en': r'contact|discuss|talk|speak|tell|consult|ask|check with|let .* know|reach out|call|guidance|approv',
+           'ar': r'تواصل|ناقش|اتصل|استشر|استشار|أخبر|اسأل|راجع|أبلغ|كلم|اطلب|طلب|يطلب|تحدث|توجيه|موافق'}
 # A claim word inside a negated, conditional or uncertain sentence is not a claim
 # ("I can't tell whether your ligament is healed", "if you notice swelling").
 HEDGE = {'en': r"\b(no|not|never|don't|do not|cannot|can't|unable|without|whether|if|unless|none)\b",

@@ -35,6 +35,32 @@ def test_target_mention_is_not_a_wrong_count_and_number_words_count():
     assert ok['scores']['correct_repetitions'] and ok['scores']['mentions_repetitions'], ok['issues']
 
 
+@pytest.mark.parametrize('sentence', ['كانت حركتك مختلفة قليلًا عن عرض المعالج.', 'تختلف سرعتك بين التكرارات.', 'شاهد التلفاز بعد التمرين.'])
+def test_ordinary_arabic_words_are_not_damage_claims(sentence):
+    assert coach.check(f'أكملت 3 تكرارات. {sentence}', {'repetitions_completed': 3}, 'ar', 'feedback')['scores']['no_medical_claims']
+
+
+@pytest.mark.parametrize('claim', ['يوجد تلف في الركبة.', 'أرى التلف في الرباط.', 'هذا دليل على وجود تلف.', 'حدث تلفا واضحا.', 'أصيب بالتلف.', 'قد يتلف الرباط.', 'هناك علامات للتلف.'])
+def test_arabic_damage_claims_are_still_caught(claim):
+    assert not coach.check(f'أكملت 3 تكرارات. {claim}', {'repetitions_completed': 3}, 'ar', 'feedback')['scores']['no_medical_claims']
+
+
+@pytest.mark.parametrize('text,lang', [
+    ('Please discuss this with your physiotherapist before you change anything.', 'en'),
+    ('ناقش هذا الأمر مع أخصائي العلاج الطبيعي قبل أي تغيير.', 'ar'),
+])
+def test_discussing_with_the_physiotherapist_counts_as_a_referral(text, lang):
+    assert coach.check(text, {}, lang, 'qa', {'defer_to_physio': True})['scores']['refers_to_physio']
+
+
+@pytest.mark.parametrize('text,value,expected', [
+    ('أكملت أربعة تكرارات.', 4, True), ('أكملت خمسة تكرارات.', 5, True), ('أكملت ستة تكرارات.', 6, True), ('أكملت عشرة تكرارات.', 10, True),
+    ('أكملت ستة تكرارات.', 5, False), ('أكملت خمسة تكرارات.', 4, False),
+])
+def test_arabic_number_words_match_their_values(text, value, expected):
+    assert coach.mentions_number(text, value, 'ar') is expected
+
+
 LOW_PAIN = {'repetitions_completed': 3, 'tracking_coverage_percent': 90, 'needs_attention': False,
             'patient_check_in': {'pain_during_exercise': False, 'pain_after_exercise_0_to_10': 2}}
 
