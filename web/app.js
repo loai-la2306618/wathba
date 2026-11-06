@@ -1,13 +1,30 @@
 import {icon,setIcon} from '/static/icons.js';
-import {FilesetResolver, PoseLandmarker} from '/vendor/vision_bundle.mjs';
+import {PoseEngine} from '/static/pose/engine.js';
+import {CONFIG as POSE,EDGES,MODELS,joint,toDisplay} from '/static/pose/schema.js';
+import {initI18n,currentLang} from '/static/i18n.js';
+initI18n();
 const $=id=>document.getElementById(id);
 const motion=$('motion'),canvas=$('skeleton'),ctx=canvas.getContext('2d'),mini=$('reference-mini');
-const state={config:null,referenceRows:[],referenceCycles:[],rows:[],session:null,mode:'reference',asset:null,stream:null,recorder:null,chunks:[],tracking:false,job:0,replay:[],liveReps:0,recordStart:0,lastSample:-1};
-const edges=[[0,1],[1,2],[2,3],[3,7],[0,4],[4,5],[5,6],[6,8],[9,10],[11,12],[11,13],[13,15],[15,17],[15,19],[15,21],[17,19],[12,14],[14,16],[16,18],[16,20],[16,22],[18,20],[11,23],[12,24],[23,24],[23,25],[24,26],[25,27],[26,28],[27,29],[29,31],[27,31],[28,30],[30,32],[28,32]];
+const state={config:null,referenceRows:[],referenceCycles:[],rows:[],session:null,mode:'reference',asset:null,stream:null,recorder:null,chunks:[],tracking:false,job:0,replay:[],liveReps:0,recordStart:0,lastSample:-1,mirrored:false};
+// Joints the frontal squat measurement needs (shoulders, hips, ankles); named, model-independent.
+const REQUIRED=POSE.measurementRequirements.hip_height;
+const DRAWN=new Set(EDGES.flat());
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const clock=t=>`${String(Math.floor(t/60)).padStart(2,'0')}:${String(Math.floor(t%60)).padStart(2,'0')}`;
-let fileset,tracker,liveHandle,paintHandle,toastTimer;
-function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,9000);}
+let engine,liveHandle,paintHandle,toastTimer;
+// Notifications: dismiss with the close button, a tap on the message or Escape; auto-hide pauses while hovered/focused.
+function hideToast(){clearTimeout(toastTimer);$('toast').hidden=true;}
+function scheduleToastHide(ms){clearTimeout(toastTimer);toastTimer=setTimeout(hideToast,ms);}
+function toast(message){
+ const el=$('toast'),text=document.createElement('span'),close=document.createElement('button');
+ text.className='toast-text';text.textContent=message;
+ close.type='button';close.className='toast-close';close.setAttribute('aria-label','Dismiss notification');close.innerHTML=icon('xmark');
+ close.onclick=event=>{event.stopPropagation();hideToast();};
+ el.replaceChildren(text,close);el.hidden=false;scheduleToastHide(6000);
+}
+$('toast').addEventListener('click',hideToast);
+for(const [event,ms] of [['mouseenter',null],['focusin',null],['mouseleave',3000],['focusout',3000]])$('toast').addEventListener(event,()=>ms?(!$('toast').hidden&&scheduleToastHide(ms)):clearTimeout(toastTimer));
+document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!$('toast').hidden&&!document.querySelector('dialog[open]'))hideToast();});
 function page(name){for(const el of document.querySelectorAll('.page'))el.hidden=el.id!==name;document.body.classList.toggle('work-mode',name==='work');window.scrollTo(0,0);cancelAnimationFrame(referenceHandle);if(name==='work')referenceHandle=requestAnimationFrame(paintReference);if(name!=='work'){motion.pause();mini.pause();cancelAnimationFrame(paintHandle);}window.dispatchEvent(new CustomEvent('wathba:page',{detail:name}));}
 function busy(title,text='',value=0){$('busy').hidden=false;$('busy-title').textContent=title;$('busy-text').textContent=text;$('busy-progress').value=value;}
 function hideBusy(){$('busy').hidden=true;}
@@ -16,20 +33,51 @@ function post(url,data){return api(url,{method:'POST',headers:{'Content-Type':'a
 async function playSafe(video){try{await video.play();}catch(error){if(error.name!=='AbortError')throw error;}}
 async function loadVideo(video,url){video.pause();video.crossOrigin='anonymous';video.src=url;video.load();if(video.readyState>=2)return;await new Promise((resolve,reject)=>{video.addEventListener('loadeddata',resolve,{once:true});video.addEventListener('error',()=>reject(Error('This video could not be played. Try an MP4 recording.')),{once:true});});}
 async function seek(video,t){t=Math.min(t,Math.max(0,video.duration-.045));if(Math.abs(video.currentTime-t)<.002&&video.readyState>=2)return;await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('Video seeking timed out. Try a shorter MP4.')),12000);video.addEventListener('seeked',()=>{clearTimeout(timer);resolve();},{once:true});video.currentTime=t;});}
-async function newTracker(){if(tracker){tracker.close();tracker=null;}fileset??=await FilesetResolver.forVisionTasks('/vendor/wasm');const common={runningMode:'VIDEO',numPoses:1,minPoseDetectionConfidence:.5,minPosePresenceConfidence:.5,minTrackingConfidence:.5,outputSegmentationMasks:false};try{tracker=await PoseLandmarker.createFromOptions(fileset,{...common,baseOptions:{modelAssetPath:'/vendor/pose_landmarker_full.task',delegate:'GPU'}});}catch(error){console.warn('GPU unavailable; using browser CPU.',error.message);tracker=await PoseLandmarker.createFromOptions(fileset,{...common,baseOptions:{modelAssetPath:'/vendor/pose_landmarker_full.task',delegate:'CPU'}});}return tracker;}
-function detect(video,t){const r=tracker.detectForVideo(video,Math.max(1,t*1000+1));return (r.landmarks[0]||[]).map(p=>({x:p.x,y:p.y,z:p.z,visibility:p.visibility??0}));}
-function drawOn(surface,video,points){
+
+// ---------------------------------------------------------------- pose engine
+function showPoseStatus(s){
+ const el=$('pose-model');if(!el)return;
+ const thread=s.thread==='worker'?'background worker':s.thread==='main'?'page thread':s.thread;
+ const parts=[s.keypointLabel?`${s.keypointLabel} keypoints`:'No keypoint model',s.detector?`${s.detector} person selection`:null].filter(Boolean);
+ el.textContent=`${parts.join(' · ')}${s.degraded.length?' · degraded':''}`;
+ el.title=[`Inference: ${thread}`,s.latencyMs?`Latency ≈ ${Math.round(s.latencyMs)} ms`:'',...s.degraded].filter(Boolean).join('\n');
+ el.classList.toggle('degraded',s.degraded.length>0);el.hidden=false;
+}
+function poseEvent(e){
+ // A different person or keypoint model starts a new temporal context for live counting.
+ if(['reset','track-change','model-change'].includes(e.type)){state.baseline=null;state.phase='rest';state.liveTorsoScale=null;}
+}
+async function ensureEngine(){
+ if(!engine){
+  const pose=state.config?.pose||{},lowEnd=(navigator.hardwareConcurrency||8)<=4||(navigator.deviceMemory||8)<=4;
+  engine=new PoseEngine({config:{maxHz:lowEnd?Math.min(8,pose.maxHz||15):pose.maxHz,reacquireSeconds:pose.reacquireSeconds},onStatus:showPoseStatus,onEvent:poseEvent});
+ }
+ try{await engine.init();}catch(error){throw Error(`Body tracking could not start on this device: ${error.message}`);}
+ return engine;
+}
+/** One schema row for the backend. Unavailable frames are explicit nulls, never zeros. */
+function rowFrom(result,time){
+ const p=result.status==='ok'?result.pose:null;
+ return p?{schema:p.schema,time,frameId:p.frameId,trackId:p.trackId,model:p.model,detector:p.detector,keypoints:p.keypoints,box:p.box}
+  :{time,keypoints:null,model:null,trackId:null,reason:result.reason||result.status};
+}
+const thresholdOf=p=>p?.threshold??(MODELS[p?.model]?.keypointThreshold);
+const usable=(p,name)=>{if(!p?.keypoints)return null;const k=p.keypoints[name];const limit=thresholdOf(p);return k&&limit!==undefined&&k.confidence>=limit?k:null;};
+
+function drawOn(surface,video,pose,mirrored=false,fit='contain'){
  const box=surface.getBoundingClientRect(),dpr=Math.min(devicePixelRatio||1,2);if(!box.width||!box.height)return;
  if(surface.width!==Math.round(box.width*dpr)||surface.height!==Math.round(box.height*dpr)){surface.width=Math.round(box.width*dpr);surface.height=Math.round(box.height*dpr);}
- const brush=surface.getContext('2d');brush.setTransform(dpr,0,0,dpr,0,0);brush.clearRect(0,0,box.width,box.height);if(!points?.length)return;
- const vw=video.videoWidth||464,vh=video.videoHeight||832,scale=Math.min(box.width/vw,box.height/vh),w=vw*scale,h=vh*scale,x=(box.width-w)/2,y=(box.height-h)/2;
- const p=points.map(v=>({x:x+v.x*w,y:y+v.y*h,c:v.visibility}));brush.lineWidth=1.7;brush.strokeStyle='#a5ffcc';brush.shadowColor='#9bffb8';brush.shadowBlur=4;
- for(const[a,b]of edges){if(a<11||b<11||p[a].c<.45||p[b].c<.45)continue;brush.beginPath();brush.moveTo(p[a].x,p[a].y);brush.lineTo(p[b].x,p[b].y);brush.stroke();}
- for(let i=11;i<29;i++){if(p[i].c<.45)continue;brush.fillStyle=[13,14,25,26,27,28].includes(i)?'#c6ff9b':'#c5ffdd';brush.beginPath();brush.arc(p[i].x,p[i].y,3.3,0,2*Math.PI);brush.fill();}
+ const brush=surface.getContext('2d');brush.setTransform(dpr,0,0,dpr,0,0);brush.clearRect(0,0,box.width,box.height);if(!pose?.keypoints)return;
+ const vw=video.videoWidth||464,vh=video.videoHeight||832,scale=(fit==='cover'?Math.max:Math.min)(box.width/vw,box.height/vh),w=vw*scale,h=vh*scale,x=(box.width-w)/2,y=(box.height-h)/2;
+ // Mirroring is a display transform only; anatomical joint names are unchanged.
+ const at=name=>{const k=toDisplay(usable(pose,name),mirrored);return k&&{x:x+k.x*w,y:y+k.y*h};};
+ brush.lineWidth=1.7;brush.strokeStyle='#a5ffcc';brush.shadowColor='#9bffb8';brush.shadowBlur=4;
+ for(const[a,b]of EDGES){const p=at(a),q=at(b);if(!p||!q)continue;brush.beginPath();brush.moveTo(p.x,p.y);brush.lineTo(q.x,q.y);brush.stroke();}
+ for(const name of DRAWN){const p=at(name);if(!p)continue;brush.fillStyle=/knee|ankle|hip/.test(name)?'#c6ff9b':'#c5ffdd';brush.beginPath();brush.arc(p.x,p.y,3.3,0,2*Math.PI);brush.fill();}
 }
-function draw(points){drawOn(canvas,motion,points);if(state.mode!=='reference'){
- const required=[11,12,23,24,27,28];const count=required.filter(i=>points?.[i]?.visibility>=.45).length;
- $('tracking-quality').textContent=points?.length?`${Math.round(count/required.length*100)}%`:'—';
+function draw(pose){drawOn(canvas,motion,pose,state.mirrored,document.body.classList.contains('camera-full')?'cover':'contain');if(state.mode!=='reference'){
+ const count=REQUIRED.filter(n=>usable(pose,n)).length;
+ $('tracking-quality').textContent=pose?.keypoints?`${Math.round(count/REQUIRED.length*100)}%`:'—';
 }}
 let referenceHandle;
 function paintReference(){
@@ -41,19 +89,54 @@ function paintReference(){
   else if(state.session.cycles.some(c=>c.end<t))target=r.end;
   if(mini.readyState>=2&&!mini.seeking&&Math.abs(mini.currentTime-target)>.055)mini.currentTime=target;
  }
- drawOn($('reference-skeleton'),mini,pointsAt(state.referenceRows,mini.currentTime));referenceHandle=requestAnimationFrame(paintReference);
+ drawOn($('reference-skeleton'),mini,poseAt(state.referenceRows,mini.currentTime));referenceHandle=requestAnimationFrame(paintReference);
 }
-function pointsAt(rows,t){if(!rows.length)return[];let lo=0,hi=rows.length-1;while(lo<hi){const m=Math.ceil((lo+hi)/2);if(rows[m].time<=t)lo=m;else hi=m-1;}const a=rows[lo],b=rows[lo+1];if(b&&a.landmarks.length===33&&b.landmarks.length===33&&b.time-a.time<.4){const f=Math.max(0,Math.min(1,(t-a.time)/(b.time-a.time)));return a.landmarks.map((v,i)=>({x:v.x*(1-f)+b.landmarks[i].x*f,y:v.y*(1-f)+b.landmarks[i].y*f,visibility:Math.min(v.visibility,b.landmarks[i].visibility)}));}return a.landmarks;}
-function paintReplay(){draw(pointsAt(state.replay,motion.currentTime));$('video-time').textContent=clock(motion.currentTime);if(motion.duration&&Number.isFinite(motion.duration))$('seek').value=Math.round(motion.currentTime/motion.duration*1000);if(state.mode==='replay'&&state.session){const n=state.session.cycles.filter(c=>c.end<=motion.currentTime).length;setReps(n);const completed=state.session.cycles.filter(c=>c.end<=motion.currentTime).at(-1);$('tempo-value').textContent=completed?`${completed.duration.toFixed(1)}s`:'—';}paintHandle=requestAnimationFrame(paintReplay);}
+/** Replay pose at time t: interpolate only between rows of the same model and person. */
+function poseAt(rows,t){
+ if(!rows.length)return null;let lo=0,hi=rows.length-1;while(lo<hi){const m=Math.ceil((lo+hi)/2);if(rows[m].time<=t)lo=m;else hi=m-1;}
+ const a=rows[lo],b=rows[lo+1];
+ if(a?.keypoints&&b?.keypoints&&a.model===b.model&&a.trackId===b.trackId&&b.time-a.time<.4){
+  const f=Math.max(0,Math.min(1,(t-a.time)/(b.time-a.time))),keypoints={};
+  for(const[name,k]of Object.entries(a.keypoints)){const n=b.keypoints[name];keypoints[name]=k&&n?{x:k.x*(1-f)+n.x*f,y:k.y*(1-f)+n.y*f,z:null,confidence:Math.min(k.confidence,n.confidence)}:null;}
+  return {...a,keypoints};
+ }
+ return a;
+}
+function paintReplay(){draw(poseAt(state.replay,motion.currentTime));$('video-time').textContent=clock(motion.currentTime);if(motion.duration&&Number.isFinite(motion.duration))$('seek').value=Math.round(motion.currentTime/motion.duration*1000);if(state.mode==='replay'&&state.session){const n=state.session.cycles.filter(c=>c.end<=motion.currentTime).length;setReps(n);const completed=state.session.cycles.filter(c=>c.end<=motion.currentTime).at(-1);$('tempo-value').textContent=completed?`${completed.duration.toFixed(1)}s`:'—';}paintHandle=requestAnimationFrame(paintReplay);}
 function setReps(n){$('live-reps').textContent=n;const total=state.mode==='replay'?(state.session?.repetitions||5):(state.config?.target||5);$('rep-progress').style.height=`${Math.min(100,n/total*100)}%`;}
-async function extractVideo(video,job,onProgress){await newTracker();const rows=[],duration=video.duration;if(!Number.isFinite(duration)||duration>180||duration<1)throw Error('Use a video between one second and three minutes.');for(let t=0;t<duration-.045;t+=1/6){if(job!==state.job)throw new DOMException('Cancelled','AbortError');await seek(video,t);if(job!==state.job)throw new DOMException('Cancelled','AbortError');const landmarks=detect(video,t);rows.push({time:+video.currentTime.toFixed(5),landmarks});draw(landmarks);onProgress?.(t/duration,video.currentTime,rows);await new Promise(requestAnimationFrame);}if(rows.length&&duration-rows.at(-1).time>.13){await seek(video,duration-.05);rows.push({time:+video.currentTime.toFixed(5),landmarks:detect(video,video.currentTime)});}return rows;}
-async function ensureReference(job){if(state.config.referenceId){if(state.referenceLoadedId!==state.config.referenceId){const s=await api(`/api/session/${state.config.referenceId}`);state.referenceRows=s.landmarks;state.referenceCycles=s.cycles;state.referenceLoadedId=s.id;}return;}if(!state.config.referenceUrl)throw Error('A therapist demonstration is needed before this session can start.');busy('Preparing the therapist reference','Tracking the actual therapist recording with MediaPipe.');const v=document.createElement('video');v.muted=true;v.playsInline=true;v.preload='auto';await loadVideo(v,state.config.referenceUrl);const rows=await extractVideo(v,job,(p)=>busy('Preparing the therapist reference','Learning movement and timing from the therapist’s recording.',p));const result=await post('/api/process',{asset:'therapist',reference:true,consent:true,rows});state.config.referenceId=result.id;state.config.referenceModel=result.model;state.referenceRows=rows;const prepared=await api(`/api/session/${result.id}`);state.referenceCycles=prepared.cycles;state.referenceLoadedId=prepared.id;v.remove();hideBusy();}
-function inputState(mode){state.mode=mode;$('work').dataset.mode=mode;$('stage-pause').setAttribute('aria-label',mode==='recording'?'Pause session':'Pause video');$('camera-empty').hidden=mode!=='reference';$('patient-label').textContent=mode==='reference'?'You':mode==='replay'?'Your recording':'You';$('patient-caption').textContent=mode==='recording'?'Live body tracking':mode==='replay'?'Detected landmarks · original timing':mode==='analysing'?'Analysing your movement':'Your recording';$('reference-timing').textContent=mode==='replay'?'Matched repetition phase':'Movement guide';$('guide-pause').hidden=mode==='replay';$('stage-pause').hidden=['reference','camera','analysing'].includes(mode);$('input-actions').hidden=mode==='recording'||mode==='replay'||mode==='analysing';$('record').hidden=mode!=='camera';$('analyse').hidden=mode!=='upload';$('finish').hidden=mode!=='recording';$('consent').closest('label').hidden=['replay','recording','analysing'].includes(mode);$('toggle-view').hidden=['reference','camera','upload'].includes(mode);$('playback-controls').hidden=mode!=='replay';$('cancel-analysis').hidden=mode!=='analysing';$('rep-caption').textContent=mode==='replay'?'Reps played':'Reps';$('coach-title').textContent=mode==='replay'?'Review together':mode==='recording'?'Keep going':'Let’s begin';}
-function cleanup(){state.job++;state.tracking=false;cancelAnimationFrame(liveHandle);cancelAnimationFrame(paintHandle);if(state.recorder&&state.recorder.state!=='inactive'){state.recorder.onstop=null;state.recorder.stop();}state.stream?.getTracks().forEach(t=>t.stop());state.stream=null;motion.srcObject=null;motion.pause();mini.pause();hideBusy();}
+async function extractVideo(video,job,onProgress){
+ const tracker=await ensureEngine(),duration=video.duration;
+ if(!Number.isFinite(duration)||duration>180||duration<1)throw Error('Use a video between one second and three minutes.');
+ // One keypoint model per recording: if a model fails mid-way, restart with the fallback model.
+ for(let attempt=0;attempt<2;attempt++){
+  tracker.resetTracking('new recording');const model=tracker.keypointModel,rows=[];let restart=false;
+  const step=async t=>{if(job!==state.job)throw new DOMException('Cancelled','AbortError');await seek(video,t);if(job!==state.job)throw new DOMException('Cancelled','AbortError');const r=await tracker.estimate(video,video.currentTime);if(job!==state.job)throw new DOMException('Cancelled','AbortError');rows.push(rowFrom(r,+video.currentTime.toFixed(5)));draw(r.pose);if(tracker.keypointModel!==model)restart=true;};
+  for(let t=0;t<duration-.045&&!restart;t+=1/6){await step(t);onProgress?.(t/duration,video.currentTime,rows);await new Promise(r=>setTimeout(r));}
+  if(!restart&&rows.length&&duration-rows.at(-1).time>.13)await step(duration-.05);
+  if(!restart)return rows;
+  if(!tracker.keypointModel)break;
+ }
+ throw Error('Body tracking stopped working on this device. Reload the page and try again.');
+}
+async function ensureReference(job){if(state.config.referenceId){if(state.referenceLoadedId!==state.config.referenceId){const s=await api(`/api/session/${state.config.referenceId}`);state.referenceRows=s.landmarks;state.referenceCycles=s.cycles;state.referenceLoadedId=s.id;}return;}if(!state.config.referenceUrl)throw Error('A therapist demonstration is needed before this session can start.');busy('Preparing the therapist reference',state.config.referenceNeedsRefit?'The reference was prepared with the previous pose engine and is being tracked again.':'Tracking the actual therapist recording in this browser.');const v=document.createElement('video');v.muted=true;v.playsInline=true;v.preload='auto';await loadVideo(v,state.config.referenceUrl);const rows=await extractVideo(v,job,(p)=>busy('Preparing the therapist reference','Learning movement and timing from the therapist’s recording.',p));const result=await post('/api/process',{asset:state.config.referenceAsset||'therapist',reference:true,consent:true,rows});state.config.referenceId=result.id;state.config.referenceModel=result.model;state.config.referenceNeedsRefit=false;state.referenceRows=rows;const prepared=await api(`/api/session/${result.id}`);state.referenceRows=prepared.landmarks;state.referenceCycles=prepared.cycles;state.referenceLoadedId=prepared.id;v.remove();hideBusy();}
+// Camera and live recording fill the screen (and use browser fullscreen where allowed).
+let dockObserver;
+function setCameraFull(on){
+ if(on&&!document.body.classList.contains('camera-full'))window.scrollTo(0,0);
+ document.body.classList.toggle('camera-full',on);
+ if(on)mini.pause(); // the doctor's video is hidden in full-screen camera
+ if(on&&!dockObserver&&window.ResizeObserver){dockObserver=new ResizeObserver(([e])=>document.body.style.setProperty('--dock-h',`${Math.round(e.target.getBoundingClientRect().height)}px`));dockObserver.observe(document.querySelector('.work-dock'));}
+ if(!on&&document.fullscreenElement)document.exitFullscreen?.().catch(()=>{});
+}
+// Browser fullscreen only when the app already spans the screen (phones); on desktop the camera fills the app's phone frame.
+function requestFullscreen(){try{const shell=document.querySelector('.app-shell');if(shell&&shell.getBoundingClientRect().width<innerWidth-2)return;if(!document.fullscreenElement)document.documentElement.requestFullscreen?.({navigationUI:'hide'})?.catch(()=>{});}catch{}}
+function inputState(mode){state.mode=mode;setCameraFull(['camera','recording'].includes(mode));$('work').dataset.mode=mode;$('stage-pause').setAttribute('aria-label',mode==='recording'?'Pause session':'Pause video');$('camera-empty').hidden=mode!=='reference';$('patient-label').textContent=mode==='reference'?'You':mode==='replay'?'Your recording':'You';$('patient-caption').textContent=mode==='recording'?'Live body tracking':mode==='replay'?'Detected joints · original timing':mode==='analysing'?'Analysing your movement':'Your recording';$('reference-timing').textContent=mode==='replay'?'Matched repetition phase':'Movement guide';$('guide-pause').hidden=mode==='replay';$('stage-pause').hidden=['reference','camera','analysing'].includes(mode);$('input-actions').hidden=mode==='recording'||mode==='replay'||mode==='analysing';$('record').hidden=mode!=='camera';$('analyse').hidden=mode!=='upload';$('finish').hidden=mode!=='recording';$('toggle-view').hidden=['reference','camera','upload'].includes(mode);$('playback-controls').hidden=mode!=='replay';$('cancel-analysis').hidden=mode!=='analysing';$('rep-caption').textContent=mode==='replay'?'Reps played':'Reps';$('coach-title').textContent=mode==='replay'?'Review together':mode==='recording'?'Keep going':'Let’s begin';}
+function setMirrored(on){state.mirrored=on;$('stage').classList.toggle('mirrored',on);}
+function cleanup(){state.job++;setCameraFull(false);state.tracking=false;engine?.resetTracking('cleanup');cancelAnimationFrame(liveHandle);cancelAnimationFrame(paintHandle);if(state.recorder&&state.recorder.state!=='inactive'){state.recorder.onstop=null;state.recorder.stop();}state.stream?.getTracks().forEach(t=>t.stop());state.stream=null;motion.srcObject=null;motion.pause();mini.pause();setMirrored(false);hideBusy();}
 async function startWorkout(){
  cleanup();page('work');setReps(0);$('tracking-quality').textContent='—';$('tempo-value').textContent='—';$('stage').classList.remove('skeleton-only');$('toggle-view').setAttribute('aria-label','Switch to skeleton view');setIcon($('toggle-view'),'accessibility');
- $('rep-note').textContent='Your set starts when you’re ready.';$('live-reps').nextElementSibling.textContent=`/${state.config?.target||5}`;$('live-hint').textContent='Watch the movement. Get ready at your own pace.';$('tracking-status').textContent='Preparing demonstration';$('consent').checked=false;inputState('reference');
- const controls=[$('use-camera'),$('upload-video'),$('use-sample')];controls.forEach(b=>b.disabled=true);const job=state.job;
+ $('rep-note').textContent='Your set starts when you’re ready.';$('live-reps').nextElementSibling.textContent=`/${state.config?.target||5}`;$('live-hint').textContent='Watch the movement. Get ready at your own pace.';$('tracking-status').textContent='Preparing demonstration';inputState('reference');
+ const controls=[$('use-camera'),$('upload-video')];controls.forEach(b=>b.disabled=true);const job=state.job;
  try{
   await ensureReference(job);if(job!==state.job)return;
   await loadVideo(motion,state.config.referenceUrl);if(job!==state.job)return;
@@ -63,15 +146,35 @@ async function startWorkout(){
  }catch(error){hideBusy();if(job===state.job&&error.name!=='AbortError')toast(error.message);}
  finally{controls.forEach(b=>b.disabled=false);}
 }
-async function chooseCamera(){if(!$('consent').checked){toast('Confirm permission before opening the camera.');return;}try{cleanup();inputState('camera');$('record').disabled=true;state.stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:state.config?.maxRecordingSeconds<180?480:720},height:{ideal:state.config?.maxRecordingSeconds<180?854:1280}},audio:false});motion.removeAttribute('src');motion.srcObject=state.stream;motion.loop=false;await playSafe(motion);playSafe(mini).catch(error=>toast(error.message));draw([]);$('tracking-status').textContent='Camera ready';$('live-hint').textContent='Keep your whole body and feet in view.';$('record').disabled=false;}catch(error){$('record').disabled=false;inputState('reference');toast(error.name==='NotAllowedError'?'Camera permission was denied. Allow it in your browser or upload a video.':error.message);}}
-async function chooseSample(){if(!$('consent').checked){toast('Confirm permission to use the provided patient recording.');return;}cleanup();state.asset='patient';inputState('upload');await loadVideo(motion,state.config.sampleUrl);motion.loop=false;playSafe(mini).catch(error=>toast(error.message));draw([]);$('tracking-status').textContent='Patient video ready';$('live-hint').textContent='Ready to analyse your uploaded set.';}
+async function chooseCamera(){requestFullscreen();try{cleanup();inputState('camera');$('record').disabled=true;state.stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:state.config?.maxRecordingSeconds<180?480:720},height:{ideal:state.config?.maxRecordingSeconds<180?854:1280}},audio:false});motion.removeAttribute('src');motion.srcObject=state.stream;motion.loop=false;setMirrored(true);await playSafe(motion);draw(null);$('tracking-status').textContent='Camera ready';$('live-hint').textContent='Keep your whole body and feet in view.';$('record').disabled=false;}catch(error){$('record').disabled=false;inputState('reference');toast(error.name==='NotAllowedError'?'Camera permission was denied. Allow it in your browser or upload a video.':error.message);}}
 async function uploadFile(file){if(!file)return;const limit=state.config?.maxUploadMb||300;if(file.size>limit*1024*1024)throw Error(`This demo supports videos up to ${limit} MB. Use a short clip or the provided patient video.`);const form=new FormData();form.append('file',file);return api('/api/upload',{method:'POST',body:form});}
-async function chooseUpload(file){if(!$('consent').checked){toast('Confirm permission before analysing a recording.');return;}cleanup();const job=state.job;busy('Preparing your recording','Reading the video and setting up browser tracking.');try{const uploaded=await uploadFile(file);if(job!==state.job)return;state.asset=uploaded.asset;inputState('upload');await loadVideo(motion,uploaded.url);motion.loop=false;playSafe(mini).catch(error=>toast(error.message));draw([]);$('tracking-status').textContent='Patient video ready';$('live-hint').textContent='Ready to analyse your uploaded set.';}finally{hideBusy();}}
-async function analyseUpload(){if(!$('consent').checked)return toast('Confirm permission to analyse this recording.');const job=++state.job;cancelAnimationFrame(paintHandle);inputState('analysing');$('tracking-status').textContent='MediaPipe tracking';$('live-hint').textContent='Analysing the uploaded movement…';$('rep-note').textContent='Final repetition count appears after comparison.';try{const rows=await extractVideo(motion,job,(p,t)=>{$('video-time').textContent=clock(t);$('rep-caption').textContent='Analysed';$('live-reps').textContent=Math.round(p*100);$('live-reps').nextElementSibling.textContent='%';$('rep-progress').style.height=`${p*100}%`;});if(job!==state.job)return;busy('Building your report','Comparing the patient’s movement with the therapist reference and extracting the actual clips.');const s=await post('/api/process',{asset:state.asset,reference:false,reference_id:state.config.referenceId,consent:true,rows});if(job!==state.job)return;showResults(s);}catch(error){if(error.name!=='AbortError'){toast(error.message);inputState('upload');}}finally{hideBusy();$('live-reps').nextElementSibling.textContent=`/${state.config?.target||5}`;}}
-function hipHeight(points){const required=[11,12,23,24,27,28];if(required.some(i=>!points[i]||points[i].visibility<.45||points[i].y>1.07))return null;const w=motion.videoWidth,h=motion.videoHeight;const torso=Math.hypot((points[11].x+points[12].x-points[23].x-points[24].x)*w/2,(points[11].y+points[12].y-points[23].y-points[24].y)*h/2);if(torso<=5)return null;if(state.liveTorsoScale===null)state.liveTorsoScale=torso;return (points[27].y+points[28].y-points[23].y-points[24].y)*h/2/state.liveTorsoScale;}
-async function startRecording(){if(!$('consent').checked)return toast('Confirm permission to analyse this recording.');if(!state.stream)return;try{busy('Preparing live tracking','The pretrained MediaPipe model runs on this device.');await newTracker();hideBusy();for(let n=3;n>0;n--){$('stage-message').hidden=false;$('stage-message').textContent=n;await new Promise(r=>setTimeout(r,800));}$('stage-message').hidden=true;const mime=['video/webm;codecs=vp8','video/webm','video/mp4'].find(t=>MediaRecorder.isTypeSupported(t));state.recorder=new MediaRecorder(state.stream,mime?{mimeType:mime,videoBitsPerSecond:state.config?.cameraBitrate||2500000}:{});state.chunks=[];state.rows=[];state.lastSample=-1;state.liveReps=0;state.baseline=null;state.phase='rest';state.liveTorsoScale=null;state.recorder.ondataavailable=e=>{if(e.data.size)state.chunks.push(e.data);};const started=new Promise((resolve,reject)=>{state.recorder.onstart=resolve;state.recorder.onerror=e=>reject(e.error||Error('Camera recording could not start.'));});state.recorder.start(250);await started;state.recordStart=performance.now();state.pausedAt=null;inputState('recording');state.tracking=true;$('tracking-status').textContent='You · Live';$('rep-note').textContent='Live count is provisional until full analysis.';setReps(0);let lastInference=-1;const loop=()=>{if(!state.tracking)return;if(state.pausedAt){liveHandle=requestAnimationFrame(loop);return;}const t=(performance.now()-state.recordStart)/1000;if(t>(state.config?.maxRecordingSeconds||180)){finishRecording();return;}if(t-lastInference>.085&&motion.readyState>=2){lastInference=t;const landmarks=detect(motion,t);draw(landmarks);if(t-state.lastSample>=1/6){state.rows.push({time:+t.toFixed(5),landmarks});state.lastSample=t;}$('video-time').textContent=clock(t);const height=hipHeight(landmarks);if(height===null){$('live-hint').textContent='Move back until your body and feet are visible.';state.phase='rest';}else{const excursion=state.config.referenceModel.templates.hip_height.excursion_median;state.baseline=state.baseline===null?height:Math.max(height,state.baseline*.998+height*.002);const depth=state.baseline-height;if(state.phase==='rest'&&depth>Math.max(.10,Math.min(.18,excursion*.4))){state.phase='down';state.cycleStart=t;if(!state.liveReps)$('live-hint').textContent='Movement in progress. Follow your assigned range.';}if(state.phase==='down'&&depth<Math.max(.05,excursion*.18)){if(t-state.cycleStart>.45){state.liveReps++;setReps(state.liveReps);const seconds=t-state.cycleStart,expected=state.config.referenceModel.duration_median;$('tempo-value').textContent=`${seconds.toFixed(1)}s`;const allowance=Math.max(.35,expected*.25,3*state.config.referenceModel.duration_mad);$('live-hint').textContent=seconds<expected-allowance?'Your last repetition was faster than the demonstration.':`Repetition ${state.liveReps} recorded.`;$('rep-note').textContent=`Observed ${seconds.toFixed(1)}s · therapist reference ${expected.toFixed(1)}s. Live timing is provisional.`;}state.phase='rest';}}}liveHandle=requestAnimationFrame(loop);};loop();}catch(error){hideBusy();$('stage-message').hidden=true;toast(error.message);}}
-async function finishRecording(){if(!state.tracking)return;state.tracking=false;cancelAnimationFrame(liveHandle);$('finish').disabled=true;try{const blob=await new Promise(resolve=>{state.recorder.onstop=()=>resolve(new Blob(state.chunks,{type:state.recorder.mimeType}));state.recorder.stop();});state.stream.getTracks().forEach(t=>t.stop());state.stream=null;motion.srcObject=null;busy('Saving your set','Preparing the recording for your report.');const uploaded=await uploadFile(new File([blob],blob.type.includes('mp4')?'camera.mp4':'camera.webm',{type:blob.type}));state.asset=uploaded.asset;await loadVideo(motion,uploaded.url);state.mode='upload';hideBusy();/* Re-extract the final encoded clip so report timestamps match camera playback exactly. */await analyseUpload();}catch(error){hideBusy();toast(error.message);inputState('reference');}finally{$('finish').disabled=false;}}
-function showResults(s){state.mode='results';state.session=s;state.rows=s.landmarks;page('results');const value=s.match_score?.value;$('score-value').textContent=value===null||value===undefined?'—':`${value}%`;$('score-fill').style.width=`${value||0}%`;$('result-duration').textContent=`${Math.round(s.duration)} sec`;$('result-reps').textContent=`${s.repetitions} ${s.repetitions===1?'rep':'reps'}`;$('result-coverage').textContent=`${Math.round(s.coverage)}%`;$('result-reviewed').textContent=`${s.cycles.filter(c=>!c.findings.length).length} / ${s.repetitions}`;const scores=new Map((s.match_score.per_repetition||[]).map(r=>[r.rep,r.value]));$('rep-bars').innerHTML=s.cycles.map(c=>`<button class="rep-bar" data-rep="${c.rep}" aria-label="Replay repetition ${c.rep}"><span>${scores.get(c.rep)??'—'}</span><i><b style="height:${scores.get(c.rep)||0}%"></b></i><span>${c.rep}</span></button>`).join('')||'<p class="subtle">No complete repetitions were visible.</p>';$('rep-bars').querySelectorAll('button').forEach(b=>b.onclick=()=>openReplay(s.cycles.find(c=>c.rep===+b.dataset.rep).start));const groups=new Map();for(const f of s.flags){if(!groups.has(f.kind))groups.set(f.kind,[]);groups.get(f.kind).push(f);}$('feedback').innerHTML=[...groups.entries()].slice(0,3).map(([kind,flags])=>`<article><h3>${esc({pace:'A different pace',range:'A smaller movement range',pattern:'A movement pattern to review',tracking:'Part of the recording was unclear',assessment:'The movement could not be fully assessed'}[kind]||'A moment to review')}</h3><p>${flags.length>1?`${flags.length} moments to review. `:''}${esc(flags[0].detail)}</p><p>${esc(flags[0].cue)}</p></article>`).join('')||'<article><h3>Your recording is ready</h3><p>No comparison differences exceeded the current thresholds. This does not establish clinical correctness.</p></article>';if(s.feedback)$('feedback').innerHTML+=`<article><h3>From your physiotherapist</h3><p>${esc(s.feedback)}</p></article>`;$('download-bundle').href=`/api/bundle/${s.id}`;loadHistory();}
+async function chooseUpload(file){cleanup();const job=state.job;busy('Preparing your recording','Reading the video and setting up browser tracking.');try{const uploaded=await uploadFile(file);if(job!==state.job)return;state.asset=uploaded.asset;inputState('upload');await loadVideo(motion,uploaded.url);motion.loop=false;playSafe(mini).catch(error=>toast(error.message));draw(null);$('tracking-status').textContent='Patient video ready';$('live-hint').textContent='Ready to analyse your uploaded set.';}finally{hideBusy();}}
+async function analyseUpload(){const job=++state.job;cancelAnimationFrame(paintHandle);inputState('analysing');$('tracking-status').textContent='Tracking in this browser';$('live-hint').textContent='Analysing the uploaded movement…';$('rep-note').textContent='Final repetition count appears after comparison.';try{const rows=await extractVideo(motion,job,(p,t)=>{$('video-time').textContent=clock(t);$('rep-caption').textContent='Analysed';$('live-reps').textContent=Math.round(p*100);$('live-reps').nextElementSibling.textContent='%';$('rep-progress').style.height=`${p*100}%`;});if(job!==state.job)return;busy('Building your report','Comparing the patient’s movement with the therapist reference and extracting the actual clips.');const s=await post('/api/process',{asset:state.asset,reference:false,reference_id:state.config.referenceId,consent:true,rows});if(job!==state.job)return;showResults(s);}catch(error){if(error.name!=='AbortError'){toast(error.message);inputState('upload');}}finally{hideBusy();$('live-reps').nextElementSibling.textContent=`/${state.config?.target||5}`;}}
+/** Frontal pelvic descent in static torso lengths, or null (counting pauses) when joints are unreliable. */
+function hipHeight(pose){
+ const p=Object.fromEntries(REQUIRED.map(n=>[n,joint(pose,n)]));
+ if(REQUIRED.some(n=>!p[n]||p[n].y>1.07))return null;
+ const w=pose.frame.width,h=pose.frame.height;
+ const torso=Math.hypot((p.left_shoulder.x+p.right_shoulder.x-p.left_hip.x-p.right_hip.x)*w/2,(p.left_shoulder.y+p.right_shoulder.y-p.left_hip.y-p.right_hip.y)*h/2);
+ if(torso<=5)return null;if(state.liveTorsoScale===null)state.liveTorsoScale=torso;
+ return (p.left_ankle.y+p.right_ankle.y-p.left_hip.y-p.right_hip.y)*h/2/state.liveTorsoScale;
+}
+function liveResult(result,t){
+ if(!state.tracking||state.pausedAt||['busy','stale'].includes(result.status))return;
+ if(result.status!=='ok'){draw(null);state.phase='rest';$('live-hint').textContent=result.reason&&result.status==='no-person'?result.reason:'Tracking lost. Move back until your body and feet are visible.';return;}
+ const pose=result.display;draw(pose);
+ if(t-state.lastSample>=1/6){state.rows.push(rowFrom(result,+t.toFixed(5)));state.lastSample=t;}
+ const height=hipHeight(pose);
+ if(height===null){$('live-hint').textContent='Counting paused: shoulders, hips and ankles must be clearly visible.';state.phase='rest';return;}
+ const excursion=state.config.referenceModel.templates.hip_height.excursion_median;state.baseline=state.baseline===null?height:Math.max(height,state.baseline*.998+height*.002);const depth=state.baseline-height;
+ if(state.phase==='rest'&&depth>Math.max(.10,Math.min(.18,excursion*.4))){state.phase='down';state.cycleStart=t;if(!state.liveReps)$('live-hint').textContent='Movement in progress. Follow your assigned range.';}
+ if(state.phase==='down'&&depth<Math.max(.05,excursion*.18)){if(t-state.cycleStart>.45){state.liveReps++;setReps(state.liveReps);const seconds=t-state.cycleStart,expected=state.config.referenceModel.duration_median;$('tempo-value').textContent=`${seconds.toFixed(1)}s`;const allowance=Math.max(.35,expected*.25,3*state.config.referenceModel.duration_mad);$('live-hint').textContent=seconds<expected-allowance?'Your last repetition was faster than the demonstration.':`Repetition ${state.liveReps} recorded.`;$('rep-note').textContent=`Observed ${seconds.toFixed(1)}s · therapist reference ${expected.toFixed(1)}s. Live timing is provisional.`;}state.phase='rest';}
+}
+async function startRecording(){if(!state.stream)return;try{busy('Preparing live tracking','The pose models run on this device; video frames are not sent anywhere during tracking.');const tracker=await ensureEngine();tracker.resetTracking('new recording');hideBusy();for(let n=3;n>0;n--){$('stage-message').hidden=false;$('stage-message').textContent=n;await new Promise(r=>setTimeout(r,800));}$('stage-message').hidden=true;const mime=['video/webm;codecs=vp8','video/webm','video/mp4'].find(t=>MediaRecorder.isTypeSupported(t));state.recorder=new MediaRecorder(state.stream,mime?{mimeType:mime,videoBitsPerSecond:state.config?.cameraBitrate||2500000}:{});state.chunks=[];state.rows=[];state.lastSample=-1;state.liveReps=0;state.baseline=null;state.phase='rest';state.liveTorsoScale=null;state.recorder.ondataavailable=e=>{if(e.data.size)state.chunks.push(e.data);};const started=new Promise((resolve,reject)=>{state.recorder.onstart=resolve;state.recorder.onerror=e=>reject(e.error||Error('Camera recording could not start.'));});state.recorder.start(250);await started;state.recordStart=performance.now();state.pausedAt=null;inputState('recording');state.tracking=true;$('tracking-status').textContent='You · Live';$('rep-note').textContent='Live count is provisional until full analysis.';setReps(0);let lastInference=-Infinity;
+ // At most one inference in flight; frames are skipped (never queued) while it runs.
+ const loop=()=>{if(!state.tracking)return;if(state.pausedAt){liveHandle=requestAnimationFrame(loop);return;}const t=(performance.now()-state.recordStart)/1000;if(t>(state.config?.maxRecordingSeconds||180)){finishRecording();return;}$('video-time').textContent=clock(t);if(!tracker.busy&&t-lastInference>=tracker.minInterval&&motion.readyState>=2){lastInference=t;tracker.estimate(motion,t,{live:true}).then(r=>liveResult(r,t),error=>console.warn('Pose inference failed',error));}liveHandle=requestAnimationFrame(loop);};loop();}catch(error){hideBusy();$('stage-message').hidden=true;toast(error.message);}}
+async function finishRecording(){if(!state.tracking)return;state.tracking=false;cancelAnimationFrame(liveHandle);engine?.resetTracking('recording finished');$('finish').disabled=true;try{const blob=await new Promise(resolve=>{state.recorder.onstop=()=>resolve(new Blob(state.chunks,{type:state.recorder.mimeType}));state.recorder.stop();});state.stream.getTracks().forEach(t=>t.stop());state.stream=null;motion.srcObject=null;setMirrored(false);busy('Saving your set','Preparing the recording for your report.');const uploaded=await uploadFile(new File([blob],blob.type.includes('mp4')?'camera.mp4':'camera.webm',{type:blob.type}));state.asset=uploaded.asset;await loadVideo(motion,uploaded.url);state.mode='upload';hideBusy();/* Re-extract the final encoded clip so report timestamps match camera playback exactly. */await analyseUpload();}catch(error){hideBusy();toast(error.message);inputState('reference');}finally{$('finish').disabled=false;}}
+function showResults(s){state.mode='results';state.session=s;state.rows=s.landmarks;page('results');const value=s.match_score?.value;$('score-value').textContent=value===null||value===undefined?'—':`${value}%`;$('score-fill').style.width=`${value||0}%`;$('result-duration').textContent=`${Math.round(s.duration)} sec`;$('result-reps').textContent=`${s.repetitions} ${s.repetitions===1?'rep':'reps'}`;$('result-coverage').textContent=`${Math.round(s.coverage)}%`;$('result-reviewed').textContent=`${s.cycles.filter(c=>!c.findings.length).length} / ${s.repetitions}`;const scores=new Map((s.match_score.per_repetition||[]).map(r=>[r.rep,r.value]));$('rep-bars').innerHTML=s.cycles.map(c=>`<button class="rep-bar" data-rep="${c.rep}" aria-label="Replay repetition ${c.rep}"><span>${scores.get(c.rep)??'—'}</span><i><b style="height:${scores.get(c.rep)||0}%"></b></i><span>${c.rep}</span></button>`).join('')||'<p class="subtle">No complete repetitions were visible.</p>';$('rep-bars').querySelectorAll('button').forEach(b=>b.onclick=()=>openReplay(s.cycles.find(c=>c.rep===+b.dataset.rep).start));const groups=new Map();for(const f of s.flags){if(!groups.has(f.kind))groups.set(f.kind,[]);groups.get(f.kind).push(f);}$('feedback').innerHTML=[...groups.entries()].slice(0,3).map(([kind,flags])=>`<article><h3>${esc({pace:'A different pace',range:'A smaller movement range',pattern:'A movement pattern to review',tracking:'Part of the recording was unclear',assessment:'The movement could not be fully assessed'}[kind]||'A moment to review')}</h3><p>${flags.length>1?`${flags.length} moments to review. `:''}${esc(flags[0].detail)}</p><p>${esc(flags[0].cue)}</p></article>`).join('')||'<article><h3>Your recording is ready</h3><p>No comparison differences exceeded the current thresholds. This does not establish clinical correctness.</p></article>';if(s.feedback)$('feedback').innerHTML+=`<article><h3>From your physiotherapist</h3><p>${esc(s.feedback)}</p></article>`;$('download-bundle').href=`/api/bundle/${s.id}`;resultsCheckIn(s);loadHistory();}
 async function openReplay(t=0){
  cleanup();page('work');inputState('replay');state.replay=state.session.landmarks;
  $('tracking-status').textContent='Recording replay';$('live-hint').textContent='Compare the same stage of the movement.';$('rep-note').textContent='The therapist replay follows the phase of your repetition.';$('live-reps').nextElementSibling.textContent=`/${state.session.repetitions}`;
@@ -89,17 +192,139 @@ function evidenceMarkup(s){
 function evidenceChart(f){
  const all=[...f.observed_curve,...f.reference_curve],minimum=Math.min(...all),maximum=Math.max(...all),range=Math.max(maximum-minimum,2*f.comparison_tolerance,.001),low=(maximum+minimum-range)/2,high=low+range;
  const path=values=>values.map((v,i)=>`${i?'L':'M'}${(30+i/(values.length-1)*440).toFixed(1)},${(153-(v-low)/range*125).toFixed(1)}`).join(' ');
- return `<div class="feature-evidence"><h3>${esc(f.label)}</h3><div class="chart-legend"><span>━ Your movement</span><span>┄ Therapist reference</span></div><svg viewBox="0 0 500 185" role="img" aria-label="${esc(f.label)} across a complete repetition"><path d="M30 25V154H470" fill="none" stroke="#dce5e1"/><path d="${path(f.reference_curve)}" fill="none" stroke="#e1e6f2" stroke-width="2.2" stroke-dasharray="6 4"/><path d="${path(f.observed_curve)}" fill="none" stroke="#a6fac5" stroke-width="2.7"/><text x="30" y="177">Start</text><text x="420" y="177">Return</text></svg><p class="chart-scale">Vertical scale: ${low.toFixed(2)} to ${high.toFixed(2)} ${esc(f.unit)}. Horizontal axis: repetition progress.</p><p>Mean aligned difference: <b>${f.mean_difference.toFixed(3)} ${esc(f.unit)}</b>. Outside the comparison tolerance in <b>${f.outside_tolerance_pct.toFixed(0)}%</b> of aligned observations.</p></div>`;
+ return `<div class="feature-evidence"><h3>${esc(f.label)}</h3><div class="chart-legend"><span><i aria-hidden="true">━</i> Your movement</span><span><i aria-hidden="true">┄</i> Therapist reference curve</span></div><svg viewBox="0 0 500 185" role="img" aria-label="${esc(f.label)} across a complete repetition"><path d="M30 25V154H470" fill="none" stroke="#dce5e1"/><path d="${path(f.reference_curve)}" fill="none" stroke="#e1e6f2" stroke-width="2.2" stroke-dasharray="6 4"/><path d="${path(f.observed_curve)}" fill="none" stroke="#a6fac5" stroke-width="2.7"/><text x="30" y="177">Start</text><text x="420" y="177">Return</text></svg><p class="chart-scale">Vertical scale: ${low.toFixed(2)} to ${high.toFixed(2)} ${esc(f.unit)}. Horizontal axis: repetition progress.</p><p>Mean aligned difference: <b>${f.mean_difference.toFixed(3)} ${esc(f.unit)}</b>. Outside the comparison tolerance in <b>${f.outside_tolerance_pct.toFixed(0)}%</b> of aligned observations.</p></div>`;
 }
 function bindEvidence(s){const select=$('evidence-rep');if(!select)return;select.onchange=()=>{
  const r=s.motion_analysis.repetitions.find(r=>r.rep===+select.value);if(!r){$('evidence-detail').innerHTML='<p>No complete repetitions were assessable.</p>';return;}
  $('evidence-detail').innerHTML=`<div class="phase-times"><span>To movement peak <b>${r.outward_seconds.toFixed(2)}s</b></span><span>Return <b>${r.return_seconds.toFixed(2)}s</b></span></div><button id="evidence-replay" class="secondary">${icon('play')}Replay repetition ${r.rep}</button>${r.features.map(f=>f.available?evidenceChart(f):`<p>${esc(f.label)}: ${esc(f.reason)}</p>`).join('')||`<p>${esc(s.motion_analysis.reason)}</p>`}`;
  $('evidence-replay').onclick=safe(()=>openReplay(r.start));
  };select.onchange();}
-function showReport(){const s=state.session;page('report');$('report-body').innerHTML=`<div class="report-section"><h2>Squat · left leg</h2><p>Compared with your team-designated therapist demonstration using ${esc(s.model)}. ${s.repetitions} complete repetitions were observed. Tracking coverage describes visible landmarks, not exercise correctness.</p><video controls playsinline src="${esc(s.annotated)}"></video></div>${evidenceMarkup(s)}<div class="report-section"><h2>Moments to review</h2><select id="clip-choice" aria-label="Choose a review clip">${s.flags.map((f,i)=>`<option value="${i}">${f.start.toFixed(1)}–${f.end.toFixed(1)}s · ${esc(f.title)}</option>`).join('')}</select><div id="clip-detail"></div></div><div class="report-section"><h2>Repetition detail</h2><div class="table-wrap"><table><thead><tr><th>Rep</th><th>Interval</th><th>Duration</th><th>Excursion*</th><th>Match</th></tr></thead><tbody>${s.cycles.map(c=>`<tr><td>${c.rep}</td><td>${c.start.toFixed(1)}–${c.end.toFixed(1)}s</td><td>${c.duration.toFixed(2)}s</td><td>${c.excursion.toFixed(2)}</td><td>${s.match_score.per_repetition?.find(r=>r.rep===c.rep)?.value??'—'}%</td></tr>`).join('')}</tbody></table></div><p>*Frontal pelvic movement relative to torso length, not calibrated clinical knee range.</p></div><div class="report-section"><h2>Physiotherapist feedback</h2><p>${esc(s.feedback||'Awaiting physiotherapist review.')}</p></div><div class="report-section"><h2>How to interpret this</h2><p>${esc(s.match_score.reason||'No comparison score was available.')}</p><p>${s.limitations.map(esc).join(' ')}</p><p>Model: ${esc(s.model)}. Reference: actual therapist video. No neural-network fine-tuning is performed.</p></div>`;const select=$('clip-choice');if(s.flags.length){select.onchange=()=>{const f=s.flags[+select.value];$('clip-detail').innerHTML=`<video controls playsinline src="${esc(f.clip)}"></video><p>${esc(f.detail)}</p><p>${esc(f.cue)}</p>`;};select.onchange();}else{select.hidden=true;$('clip-detail').innerHTML='<p>No moments were flagged.</p>';}$('download-report').href=s.report;bindEvidence(s);}
+const FEATURE_LABELS={knee_angle:'Left knee angle (2D, deg)',hip_angle:'Left hip angle (2D, deg)',torso_lean:'Trunk lean (2D, deg)',knee_offset:'Left knee offset (leg lengths)',hip_height:'Hip height (torso lengths, per frame)'};
+function vitposeMarkup(check){
+ if(!check)return '';const fmt=v=>v===null||v===undefined?'—':Math.abs(v)>=10?v.toFixed(1):v.toFixed(3);
+ const rows=Object.entries(check.summary).map(([k,v])=>`<tr><td>${esc(FEATURE_LABELS[k]||k)}</td><td>${v.compared}</td><td>${fmt(v.median_abs_difference)}</td></tr>`).join('');
+ const frames=check.checkpoints.map(c=>`<tr><td>${c.rep??'—'} · ${esc(c.phase)}</td><td>${c.time.toFixed(2)}s</td><td>${fmt(c.browser.features.knee_offset)} / ${fmt(c.vitpose.features.knee_offset)}</td><td>${fmt(c.browser.features.torso_lean)} / ${fmt(c.vitpose.features.torso_lean)}</td></tr>`).join('');
+ return `<p>${check.checkpoints.length} frames checked with ${esc(check.repository)} on the person boxes chosen by the browser tracker (${esc(MODELS[check.browser_model]?.label||'browser model')}).</p><div class="table-wrap"><table><thead><tr><th>Measurement</th><th>Frames</th><th>Median |difference|</th></tr></thead><tbody>${rows}</tbody></table></div><details><summary>Per-frame values (browser / ViTPose)</summary><div class="table-wrap"><table><thead><tr><th>Rep · phase</th><th>Time</th><th>Knee offset</th><th>Trunk lean</th></tr></thead><tbody>${frames}</tbody></table></div></details><p>${esc(check.note)}</p>`;
+}
+function poseModelsMarkup(s){
+ const legacy=s.pose_engine==='mediapipe-pose-landmarker-full';
+ const vit=state.config?.pose?.vitpose,check=s.model_checks?.vitpose;
+ const unavailable=(s.unavailable_measurements||[]).map(m=>`<li><b>${esc(m.label)}</b>: ${esc(m.reason)}</li>`).join('');
+ const action=legacy?'<p>This session was recorded with the previous MediaPipe engine; a ViTPose check needs a session tracked with the current engine.</p>'
+  :vit?.available?`<label class="consent"><input id="vitpose-consent" type="checkbox">Re-analyse selected frames of this already uploaded recording on the Wathba server. No third-party service is used.</label><button id="vitpose-run" class="secondary">${check?'Run the ViTPose check again':'Run ViTPose check'}</button>`
+  :`<p>ViTPose check unavailable on this server: ${esc(vit?.reason||'not configured')}</p>`;
+ return `<div class="report-section" id="pose-models"><h2>Pose models</h2><p>${esc(s.model)}. Joints are 2D image-plane estimates (17 COCO keypoints); angles change with camera position.</p>${unavailable?`<p>Not measured with these models:</p><ul class="unavailable-list">${unavailable}</ul>`:''}<h3>ViTPose frame check</h3><div id="vitpose-result">${vitposeMarkup(check)}</div>${action}</div>`;
+}
+function bindPoseModels(s){
+ const run=$('vitpose-run');if(!run)return;
+ run.onclick=safe(async()=>{
+  if(!$('vitpose-consent').checked)throw Error('Confirm that this recording may be re-analysed on the Wathba server.');
+  run.disabled=true;busy('Checking selected frames with ViTPose','Running on the Wathba server with the tracked person boxes. The first run downloads the model.');
+  try{const check=await post(`/api/session/${s.id}/vitpose-check`,{consent:true});s.model_checks={...(s.model_checks||{}),vitpose:check};$('vitpose-result').innerHTML=vitposeMarkup(check);}finally{hideBusy();run.disabled=false;}
+ });
+}
+// ------------------------------------------------------------- post-exercise check-in
+const LOCATIONS=[['knee','Knee'],['hip','Hip'],['back','Lower back'],['ankle','Ankle'],['other','Other']];
+const DIFFICULTY=[['easy','Easy'],['moderate','Moderate'],['hard','Hard']];
+const chip=(name,value,label,checked,type='radio')=>`<label class="chip"><input type="${type}" name="${name}" value="${value}" ${checked?'checked':''}><span>${label}</span></label>`;
+const yesNo=(name,value)=>`<div class="chips">${chip(name,'no','No',value===false)}${chip(name,'yes','Yes',value===true)}</div>`;
+function checkInForm(c={}){
+ return `<form class="check-in-form">
+ <fieldset><legend>Did you feel pain during the exercise?</legend>${yesNo('pain_during',c.pain_during)}</fieldset>
+ <fieldset><legend>How much pain do you feel now, after the exercise?</legend><div class="chips pain-scale">${Array.from({length:11},(_,n)=>chip('pain_after',n,n,c.pain_after===n)).join('')}</div><small>0 = no pain · 10 = worst pain</small></fieldset>
+ <fieldset><legend>Where did you feel it?</legend><div class="chips">${LOCATIONS.map(([v,l])=>chip('pain_locations',v,l,(c.pain_locations||[]).includes(v),'checkbox')).join('')}</div></fieldset>
+ <fieldset><legend>How hard was the exercise?</legend><div class="chips">${DIFFICULTY.map(([v,l])=>chip('difficulty',v,l,c.difficulty===v)).join('')}</div></fieldset>
+ <fieldset><legend>Did your knee feel unstable or give way?</legend>${yesNo('knee_unstable',c.knee_unstable)}</fieldset>
+ <fieldset><legend>Do you notice new swelling?</legend>${yesNo('swelling',c.swelling)}</fieldset>
+ <label class="notes-label"><span>Anything else for your physiotherapist? (optional)</span><textarea name="notes" maxlength="1000" rows="2">${esc(c.notes||'')}</textarea></label>
+ <button class="primary" type="submit">Save answers</button></form>`;
+}
+function checkInSummary(c){
+ const yn=v=>v===null||v===undefined?'Not answered':v?'Yes':'No',label=(list,v)=>list.find(([k])=>k===v)?.[1];
+ const rows=[['Pain during',yn(c.pain_during)],['Pain after (0–10)',c.pain_after??'Not answered'],['Where',(c.pain_locations||[]).map(v=>label(LOCATIONS,v)).join(' · ')||'Not specified'],['Difficulty',label(DIFFICULTY,c.difficulty)||'Not answered'],['Knee unstable',yn(c.knee_unstable)],['New swelling',yn(c.swelling)]];
+ const alert=c.attention?.length?'<p class="check-in-alert" role="alert"><b>Needs attention</b><span>Your answers mention pain, instability or swelling. Stop if it gets worse and contact your physiotherapist before your next session. This is not a diagnosis.</span></p>':'';
+ return `${alert}<dl class="check-in-answers">${rows.map(([k,v])=>`<div><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>${c.notes?`<p class="check-in-notes"><b>Notes</b><span data-no-i18n>${esc(c.notes)}</span></p>`:''}<button type="button" class="text-button" data-check-in-edit>Edit answers</button>`;
+}
+function renderCheckIn(host,s,editing=!s.check_in){
+ if(!host)return;
+ host.innerHTML=`<h2>How did you feel?</h2>${editing?'<p class="subtle">Answer a few quick questions for your physiotherapist.</p>'+checkInForm(s.check_in||{}):checkInSummary(s.check_in)}`;
+ host.querySelector('[data-check-in-edit]')?.addEventListener('click',()=>renderCheckIn(host,s,true));
+ const form=host.querySelector('form');
+ if(form)form.onsubmit=safe(async e=>{
+  e.preventDefault();const f=new FormData(form),yn=n=>f.get(n)==='yes'?true:f.get(n)==='no'?false:null;
+  const answers={pain_during:yn('pain_during'),pain_after:f.get('pain_after')===null?null:Number(f.get('pain_after')),pain_locations:f.getAll('pain_locations'),difficulty:f.get('difficulty')||null,knee_unstable:yn('knee_unstable'),swelling:yn('swelling'),notes:String(f.get('notes')||'').trim()};
+  const button=form.querySelector('button[type=submit]');button.disabled=true;
+  try{const updated=await post(`/api/session/${s.id}/check-in`,answers);Object.assign(s,{check_in:updated.check_in});if(state.session?.id===s.id)state.session.check_in=updated.check_in;renderCheckIn(host,s,false);toast('Answers saved. Your physiotherapist will see them in your report.');}
+  finally{button.disabled=false;}
+ });
+}
+function resultsCheckIn(s){
+ let host=$('check-in-results');
+ if(!host){host=document.createElement('section');host.id='check-in-results';host.className='glass check-in-card';document.querySelector('#results .completion-cards').after(host);}
+ renderCheckIn(host,s);
+}
+// --------------------------------------------------------------- AI coach (Qwen3)
+const aiSummaryHtml=r=>r.checked?`<p class="ai-text" data-no-i18n dir="auto">${esc(r.text)}</p><small class="ai-meta">${esc(r.stats?.repo||'Qwen3')} · ${r.stats?.seconds??'—'} s</small>`
+ :`<p class="subtle">The model's summary did not pass the automatic checks, so it is not shown.</p>`;
+const aiAnswerHtml=q=>`<div class="ai-q"><b data-no-i18n dir="auto">${esc(q.question)}</b><p data-no-i18n dir="auto">${esc(q.text)}</p></div>`;
+function aiSection(s){
+ const ai=state.config?.ai?.text,lang=currentLang(),sum=s.ai?.summary?.[lang],qs=(s.ai?.questions||[]).filter(q=>q.lang===lang).slice(-6);
+ if(!ai?.available)return `<div class="report-section ai-card"><h2>AI coach</h2><p class="subtle">The AI coach is not available on this server.</p><p class="subtle" data-no-i18n>${esc(ai?.reason||'')}</p></div>`;
+ return `<div class="report-section ai-card" id="ai-card"><h2>AI coach</h2>
+ <p class="subtle">Written by a Qwen3 model running on the Wathba server, using only your measured results and answers. Every reply is checked automatically. Not medical advice.</p>
+ <label class="consent"><input id="ai-consent" type="checkbox">Allow the Qwen3 model on the Wathba server to process this session. Nothing is sent to other services.</label>
+ <div id="ai-summary">${sum?aiSummaryHtml(sum):''}</div>
+ <button id="ai-summary-run" class="secondary" type="button">${sum?'Write the summary again':'Write my summary'}</button>
+ <h3>Ask about this session</h3>
+ <div id="ai-thread">${qs.map(aiAnswerHtml).join('')}</div>
+ <form id="ai-ask" class="ai-ask"><input name="question" maxlength="500" autocomplete="off" placeholder="For example: how many repetitions did I do?" aria-label="Your question"><button class="primary" type="submit">Ask</button></form></div>`;
+}
+function visionSection(s){
+ const vision=state.config?.ai?.vision,review=s.ai?.vision;
+ if(!vision?.available)return '';
+ const body=review?(review.checked?`<p class="ai-text" data-no-i18n dir="auto">${esc(review.text)}</p><small class="ai-meta">${esc(review.stats?.repo||'Qwen3-VL')} · ${review.frame_times.length} frames</small>`:`<p class="subtle">The description did not pass the automatic checks, so it is not shown.</p>`):'';
+ return `<div class="report-section"><h2>Vision model review</h2><p>Experimental: a Qwen3-VL model describes the start and bottom of your first repetitions. It does not change your score.</p><div id="ai-vision">${body}</div><button id="ai-vision-run" class="secondary" type="button">Describe the frames</button></div>`;
+}
+function bindAi(s){
+ const consent=()=>{if(!$('ai-consent')?.checked)throw Error('Confirm that this session may be processed by the Qwen3 model on the Wathba server.');return true;};
+ const store=(kind,result)=>{s.ai??={};if(kind==='summary')(s.ai.summary??={})[result.lang]=result;else if(kind==='question')s.ai.questions=[...(s.ai.questions||[]),result];else s.ai.vision=result;};
+ if($('ai-summary-run'))$('ai-summary-run').onclick=safe(async()=>{consent();busy('Writing your summary','The Qwen3 model is reading your session on the Wathba server. The first run loads the model.');
+  try{const r=await post(`/api/session/${s.id}/ai/summary`,{consent:true,lang:currentLang()});store('summary',r);$('ai-summary').innerHTML=aiSummaryHtml(r);$('ai-summary-run').textContent='Write the summary again';}finally{hideBusy();}});
+ if($('ai-ask'))$('ai-ask').onsubmit=safe(async e=>{e.preventDefault();consent();const input=$('ai-ask').elements.question,question=input.value.trim();if(!question)throw Error('Type a question first.');
+  const button=$('ai-ask').querySelector('button');button.disabled=true;$('ai-thread').insertAdjacentHTML('beforeend','<p class="subtle ai-wait">Thinking…</p>');
+  try{const r=await post(`/api/session/${s.id}/ai/ask`,{consent:true,lang:currentLang(),question});store('question',r);input.value='';$('ai-thread').insertAdjacentHTML('beforeend',aiAnswerHtml(r));}
+  finally{button.disabled=false;$('ai-thread').querySelector('.ai-wait')?.remove();}});
+ if($('ai-vision-run'))$('ai-vision-run').onclick=safe(async()=>{
+  if(!$('ai-consent')?.checked)throw Error('Confirm that this session may be processed by the Qwen3 model on the Wathba server.');
+  busy('Describing the frames','The Qwen3-VL model is looking at your repetitions on the Wathba server. The first run loads the model.');
+  try{const r=await post(`/api/session/${s.id}/ai/vision`,{consent:true,lang:currentLang()});store('vision',r);$('ai-vision').innerHTML=r.checked?`<p class="ai-text" data-no-i18n dir="auto">${esc(r.text)}</p><small class="ai-meta">${esc(r.stats?.repo||'Qwen3-VL')} · ${r.frame_times.length} frames</small>`:'<p class="subtle">The description did not pass the automatic checks, so it is not shown.</p>';}finally{hideBusy();}});
+}
+// ---------------------------------------------------------------------- report
+function showReport(){const s=state.session;page('report');
+ const value=s.match_score?.value,when=new Intl.DateTimeFormat(currentLang()==='ar'?'ar':'en',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Qatar'}).format(new Date(s.created_at));
+ const stat=(v,l)=>`<div><strong>${v}</strong><span>${l}</span></div>`;
+ const reps=s.cycles.map(c=>`<tr><td>${c.rep}</td><td>${c.start.toFixed(1)}–${c.end.toFixed(1)}s</td><td>${c.duration.toFixed(2)}s</td><td>${c.excursion.toFixed(2)}</td><td>${s.match_score.per_repetition?.find(r=>r.rep===c.rep)?.value??'—'}%</td></tr>`).join('');
+ $('report-body').innerHTML=`<div class="report-section report-summary"><h2>Squat · left leg</h2><p class="subtle" data-no-i18n>${esc(when)}</p><div class="report-stats">${stat(s.repetitions,'Repetitions')}${stat(`${Math.round(s.duration)} sec`,'Duration')}${stat(`${Math.round(s.coverage)}%`,'Tracking')}${stat(value===null||value===undefined?'—':`${value}%`,'Reference match')}</div></div>
+ <div class="report-section check-in-card" id="check-in-report"></div>
+ ${aiSection(s)}
+ <div class="report-section"><h2>From your physiotherapist</h2><p>${esc(s.feedback||'Awaiting physiotherapist review.')}</p></div>
+ <div class="report-section"><h2>Moments to review</h2><select id="clip-choice" aria-label="Choose a review clip">${s.flags.map((f,i)=>`<option value="${i}">${f.start.toFixed(1)}–${f.end.toFixed(1)}s · ${esc(f.title)}</option>`).join('')}</select><div id="clip-detail"></div></div>
+ <details class="report-section technical-details"><summary>Technical details</summary>
+  <h3>Annotated recording</h3><video controls playsinline src="${esc(s.annotated)}"></video>
+  ${evidenceMarkup(s)}
+  <div class="report-section"><h2>Repetition detail</h2><div class="table-wrap"><table><thead><tr><th>Rep</th><th>Interval</th><th>Duration</th><th>Excursion*</th><th>Match</th></tr></thead><tbody>${reps}</tbody></table></div><p>*Frontal pelvic movement relative to torso length, measured in the 2D image plane; not calibrated clinical knee range.</p></div>
+  ${visionSection(s)}
+  ${poseModelsMarkup(s)}
+  <div class="report-section"><h2>How to interpret this</h2><p>${esc(s.match_score.reason||'No comparison score was available.')}</p>${s.limitations.map(l=>`<p>${esc(l)}</p>`).join('')}</div>
+ </details>`;
+ renderCheckIn($('check-in-report'),s);
+ const select=$('clip-choice');if(s.flags.length){select.onchange=()=>{const f=s.flags[+select.value];$('clip-detail').innerHTML=`<video controls playsinline src="${esc(f.clip)}"></video><p>${esc(f.detail)}</p><p>${esc(f.cue)}</p>`;};select.onchange();}else{select.hidden=true;$('clip-detail').innerHTML='<p>No moments were flagged.</p>';}
+ $('download-report').href=s.report;bindEvidence(s);bindPoseModels(s);bindAi(s);}
+// Re-render date-formatted screens when the language changes.
+window.addEventListener('wathba:lang',()=>{if(!$('report').hidden&&state.session)showReport();});
 async function loadHistory(){const history=await api('/api/history');$('history').innerHTML=history.slice(0,3).map((s,i)=>`<button data-session="${s.id}">Previous set ${i+1} · ${s.repetitions} reps · ${s.score??'—'}% reference match</button>`).join('');$('history').querySelectorAll('button').forEach(b=>b.onclick=async()=>showResults(await api(`/api/session/${b.dataset.session}`)));}
 function safe(fn){return async(...args)=>{try{await fn(...args);}catch(error){hideBusy();if(error.name!=='AbortError')toast(error.message);}};}
-$('start-workout').onclick=safe(startWorkout);$('back-home').onclick=()=>{cleanup();page('home');};$('use-camera').onclick=safe(chooseCamera);$('use-sample').onclick=safe(chooseSample);$('upload-video').onclick=()=>{if(!$('consent').checked)return toast('Confirm permission before selecting your recording.');$('file-input').click();};$('file-input').onchange=safe(e=>chooseUpload(e.target.files[0]));$('analyse').onclick=safe(analyseUpload);$('record').onclick=safe(startRecording);$('finish').onclick=safe(finishRecording);$('cancel-analysis').onclick=()=>{state.job++;inputState('upload');toast('Analysis cancelled. You can start again.');};$('toggle-view').onclick=()=>{const skeleton=$('stage').classList.toggle('skeleton-only');$('toggle-view').setAttribute('aria-label',skeleton?'Switch to video view':'Switch to skeleton view');setIcon($('toggle-view'),skeleton?'camera':'accessibility');};$('score-info').onclick=()=>{$('score-explanation').hidden=!$('score-explanation').hidden;};$('open-replay').onclick=safe(()=>openReplay());$('open-report').onclick=showReport;$('report-back').onclick=() =>showResults(state.session);$('back-results').onclick=()=>showResults(state.session);$('done').onclick=$('results-home').onclick=()=>{cleanup();page('home');};$('play-pause').onclick=safe(async()=>{if(motion.paused){await playSafe(motion);setIcon($('play-pause'),'pause');}else{motion.pause();setIcon($('play-pause'),'play');}});$('seek').oninput=safe(async()=>seek(motion,+$('seek').value/1000*motion.duration));$('previous-rep').onclick=safe(()=>{const c=[...state.session.cycles].reverse().find(c=>c.start<motion.currentTime-.8)||state.session.cycles[0];if(c)return seek(motion,c.start);});$('next-rep').onclick=safe(()=>{const c=state.session.cycles.find(c=>c.start>motion.currentTime+.4);if(c)return seek(motion,c.start);});$('refresh-feedback').onclick=safe(async()=>{state.session=await api(`/api/session/${state.session.id}`);showReport();toast('Physiotherapist feedback refreshed.');});
+$('start-workout').onclick=safe(startWorkout);$('back-home').onclick=()=>{cleanup();page('home');};$('use-camera').onclick=safe(chooseCamera);$('upload-video').onclick=()=>{$('file-input').click();};$('file-input').onchange=safe(e=>chooseUpload(e.target.files[0]));$('analyse').onclick=safe(analyseUpload);$('record').onclick=safe(startRecording);$('finish').onclick=safe(finishRecording);$('cancel-analysis').onclick=()=>{state.job++;engine?.resetTracking('cancelled');inputState('upload');toast('Analysis cancelled. You can start again.');};$('toggle-view').onclick=()=>{const skeleton=$('stage').classList.toggle('skeleton-only');$('toggle-view').setAttribute('aria-label',skeleton?'Switch to video view':'Switch to skeleton view');setIcon($('toggle-view'),skeleton?'camera':'accessibility');};$('score-info').onclick=()=>{$('score-explanation').hidden=!$('score-explanation').hidden;};$('open-replay').onclick=safe(()=>openReplay());$('open-report').onclick=showReport;$('report-back').onclick=() =>showResults(state.session);$('back-results').onclick=()=>showResults(state.session);$('done').onclick=$('results-home').onclick=()=>{cleanup();page('home');};$('play-pause').onclick=safe(async()=>{if(motion.paused){await playSafe(motion);setIcon($('play-pause'),'pause');}else{motion.pause();setIcon($('play-pause'),'play');}});$('seek').oninput=safe(async()=>seek(motion,+$('seek').value/1000*motion.duration));$('previous-rep').onclick=safe(()=>{const c=[...state.session.cycles].reverse().find(c=>c.start<motion.currentTime-.8)||state.session.cycles[0];if(c)return seek(motion,c.start);});$('next-rep').onclick=safe(()=>{const c=state.session.cycles.find(c=>c.start>motion.currentTime+.4);if(c)return seek(motion,c.start);});$('refresh-feedback').onclick=safe(async()=>{state.session=await api(`/api/session/${state.session.id}`);showReport();toast('Physiotherapist feedback refreshed.');});
 
 $('prepare-reference').onclick=safe(async()=>{
  const file=$('reference-file').files[0];
@@ -108,7 +333,7 @@ $('prepare-reference').onclick=safe(async()=>{
  cleanup();const job=state.job;busy('Preparing therapist reference','Reading the uploaded demonstration.');
  try{
   const uploaded=await uploadFile(file);const v=document.createElement('video');v.muted=true;v.playsInline=true;
-  await loadVideo(v,uploaded.url);const rows=await extractVideo(v,job,p=>busy('Preparing therapist reference','Tracking the demonstration with MediaPipe.',p));
+  await loadVideo(v,uploaded.url);const rows=await extractVideo(v,job,p=>busy('Preparing therapist reference','Tracking the demonstration in this browser.',p));
   const r=await post('/api/process',{asset:uploaded.asset,reference:true,consent:true,rows});
   state.config=await api('/api/config');state.referenceRows=rows;
   $('reference-ready').textContent=`Reference ready: ${r.model.training_cycles} complete demonstration repetitions. The patient session will now use this recording.`;
@@ -117,14 +342,18 @@ $('prepare-reference').onclick=safe(async()=>{
 $('stage-pause').onclick=safe(async()=>{
  if(state.mode==='recording'&&state.recorder){
   if(state.recorder.state==='recording'){state.recorder.pause();state.pausedAt=performance.now();setIcon($('stage-pause'),'play');$('stage-pause').setAttribute('aria-label','Resume session');$('tracking-status').textContent='Session paused';}
-  else if(state.recorder.state==='paused'){state.recordStart+=performance.now()-state.pausedAt;state.pausedAt=null;state.recorder.resume();setIcon($('stage-pause'),'pause');$('stage-pause').setAttribute('aria-label','Pause session');$('tracking-status').textContent='You · Live';}
+  else if(state.recorder.state==='paused'){state.recordStart+=performance.now()-state.pausedAt;state.pausedAt=null;engine?.resetTracking('resumed');state.recorder.resume();setIcon($('stage-pause'),'pause');$('stage-pause').setAttribute('aria-label','Pause session');$('tracking-status').textContent='You · Live';}
  }else if(motion.paused)await playSafe(motion);else motion.pause();
 });
 for(const event of ['play','pause'])motion.addEventListener(event,()=>{setIcon($('stage-pause'),motion.paused?'play':'pause');setIcon($('play-pause'),motion.paused?'play':'pause');$('stage-pause').setAttribute('aria-label',motion.paused?'Play video':'Pause video');});
-window.addEventListener('pagehide',cleanup);
-try{state.config=await api('/api/config');document.documentElement.style.setProperty('--poster',state.config.poster?`url("${state.config.poster}")`:'none');$('hero-image').src=$('exercise-thumb').src=state.config.poster||'';$('use-sample').hidden=!state.config.sampleUrl;$('start-workout').disabled=false;await loadHistory();const params=new URLSearchParams(location.search);if(params.has('reference'))page('reference-setup');else if(params.has('session'))showResults(await api(`/api/session/${encodeURIComponent(params.get('session'))}`));}catch(error){toast(error.message);}
-// Expose read-only diagnostics for verifying the actual browser model and source roles.
-window.wathbaDiagnostics=()=>({mode:state.mode,referenceId:state.config?.referenceId,referenceFrames:state.referenceRows.length,patientFrames:state.rows.length,liveRepetitions:state.liveReps,session:state.session?.id,model:state.session?.model,referenceSynthetic:state.session?.reference?.synthetic});
+// Release the camera and the model sessions/worker when the page goes away.
+window.addEventListener('pagehide',()=>{cleanup();const e=engine;engine=null;e?.dispose();});
+try{state.config=await api('/api/config');document.documentElement.style.setProperty('--poster',state.config.poster?`url("${state.config.poster}")`:'none');$('hero-image').src=$('exercise-thumb').src=state.config.poster||'';$('start-workout').disabled=false;
+ // Load and warm up the pose models in the background so starting an exercise does not wait for them.
+ (window.requestIdleCallback||(f=>setTimeout(f,1200)))(()=>ensureEngine().catch(error=>console.warn('Pose model preload failed; it will be retried when needed.',error.message)),{timeout:3000});
+ await loadHistory();const params=new URLSearchParams(location.search);if(params.has('reference'))page('reference-setup');else if(params.has('session'))showResults(await api(`/api/session/${encodeURIComponent(params.get('session'))}`));}catch(error){toast(error.message);}
+// Expose read-only diagnostics for verifying the actual browser models and source roles.
+window.wathbaDiagnostics=()=>({mode:state.mode,referenceId:state.config?.referenceId,referenceFrames:state.referenceRows.length,patientFrames:state.rows.length,liveRepetitions:state.liveReps,session:state.session?.id,model:state.session?.model,referenceSynthetic:state.session?.reference?.synthetic,pose:engine?.status()??null});
 
 $('guide-pause').onclick=safe(async()=>{if(mini.paused)await playSafe(mini);else mini.pause();});
 for(const event of ['play','pause'])mini.addEventListener(event,()=>{setIcon($('guide-pause'),mini.paused?'play':'pause');$('guide-pause').setAttribute('aria-label',mini.paused?'Play therapist demonstration':'Pause therapist demonstration');});

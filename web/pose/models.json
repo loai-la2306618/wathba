@@ -1,0 +1,85 @@
+{
+  "schema": "wathba.pose/1",
+  "pipeline": "wathba-pose-coco17-v1",
+  "joints": [
+    "nose", "left_eye", "right_eye", "left_ear", "right_ear",
+    "left_shoulder", "right_shoulder", "left_elbow", "right_elbow",
+    "left_wrist", "right_wrist", "left_hip", "right_hip",
+    "left_knee", "right_knee", "left_ankle", "right_ankle"
+  ],
+  "edges": [
+    ["left_shoulder", "right_shoulder"], ["left_shoulder", "left_elbow"], ["left_elbow", "left_wrist"],
+    ["right_shoulder", "right_elbow"], ["right_elbow", "right_wrist"],
+    ["left_shoulder", "left_hip"], ["right_shoulder", "right_hip"], ["left_hip", "right_hip"],
+    ["left_hip", "left_knee"], ["left_knee", "left_ankle"], ["right_hip", "right_knee"], ["right_knee", "right_ankle"]
+  ],
+  "capabilities": {
+    "keypointSet": "coco17",
+    "dimensions": 2,
+    "depth": false,
+    "worldCoordinates": false,
+    "footLandmarks": false,
+    "handLandmarks": false,
+    "visibility": false
+  },
+  "models": {
+    "yolov8n-pose": {
+      "repository": "Xenova/yolov8n-pose",
+      "revision": "da4224085e2f6ce4c9ff9b670e28765194619db2",
+      "label": "YOLOv8n-pose",
+      "role": "person detection, initial pose and periodic reacquisition",
+      "files": {"detection": "model_quantized.onnx", "keypoints": "model.onnx"},
+      "filesNote": "8-bit quantized weights select/reacquire the person (boxes matched fp32 with IoU >= 0.97 on the test clip); fp32 weights load only if YOLO must supply measurement keypoints (MoveNet unavailable).",
+      "runtime": "browser (ONNX Runtime Web, WebAssembly)",
+      "license": "AGPL-3.0",
+      "input": {"name": "images", "layout": "NCHW", "dtype": "float32", "width": 640, "height": 640, "resize": "stretch", "rescale": 0.00392156862745098},
+      "output": {"name": "output0", "shape": [1, 56, 8400], "fields": "cx, cy, w, h, person score, 17 x (x, y, keypoint score) in 640x640 input pixels"},
+      "personThreshold": 0.5,
+      "nmsIou": 0.5,
+      "keypointThreshold": 0.5,
+      "confidenceKind": "YOLOv8 keypoint presence score (sigmoid); model-specific, not MediaPipe visibility"
+    },
+    "movenet-singlepose-lightning": {
+      "repository": "Xenova/movenet-singlepose-lightning",
+      "revision": "ed0f314bb7356fd1dbf1e4f52c2d40791bf6534f",
+      "label": "MoveNet SinglePose Lightning",
+      "files": {"keypoints": "model.onnx"},
+      "role": "continuous single-person pose on the selected person's crop",
+      "runtime": "browser (ONNX Runtime Web, WebAssembly)",
+      "license": "Apache-2.0",
+      "input": {"name": "input", "layout": "NHWC", "dtype": "int32", "width": 192, "height": 192, "resize": "square crop, zero padding outside the frame"},
+      "output": {"name": "output_0", "shape": [1, 1, 17, 3], "fields": "17 x (y, x, score), normalised to the square crop"},
+      "cropMargin": 0.25,
+      "keypointThreshold": 0.3,
+      "confidenceKind": "MoveNet heatmap score; model-specific, not MediaPipe visibility"
+    },
+    "vitpose-base-simple": {
+      "repository": "usyd-community/vitpose-base-simple",
+      "revision": "a93ac0c67e0b7e2c55287d21d4c460c8f3c54d45",
+      "label": "ViTPose-B (simple decoder)",
+      "role": "server-side selected-frame check on person boxes supplied by the tracker",
+      "runtime": "Wathba backend (PyTorch / transformers)",
+      "license": "Apache-2.0",
+      "input": {"layout": "NCHW", "dtype": "float32", "width": 192, "height": 256, "resize": "affine crop of the supplied COCO [x, y, w, h] box"},
+      "output": {"fields": "17 COCO keypoints in image pixels with heatmap scores"},
+      "keypointThreshold": 0.3,
+      "confidenceKind": "ViTPose heatmap maximum; model-specific, not MediaPipe visibility"
+    }
+  },
+  "unsupportedMeasurements": {
+    "depth": {"label": "Landmark depth / distance from camera", "requires": "depth", "reason": "The COCO-17 models return 2D image coordinates only. No depth is estimated."},
+    "world_coordinates": {"label": "Metric 3D world coordinates", "requires": "worldCoordinates", "reason": "None of the three models estimate 3D world coordinates."},
+    "knee_flexion_3d": {"label": "3D knee flexion angle", "requires": "depth", "reason": "A true flexion angle needs 3D joint positions. Only 2D image-plane angles are available, and they change with camera position."},
+    "heel_toe_contact": {"label": "Heel lift / toe contact", "requires": "footLandmarks", "reason": "COCO-17 has ankles but no heel or toe landmarks, so foot contact cannot be assessed."},
+    "foot_progression": {"label": "Foot progression angle", "requires": "footLandmarks", "reason": "Needs heel and toe landmarks, which these models do not provide."},
+    "hand_detail": {"label": "Hand and finger position", "requires": "handLandmarks", "reason": "COCO-17 ends at the wrists."}
+  },
+  "measurementRequirements": {
+    "hip_height": ["left_shoulder", "right_shoulder", "left_hip", "right_hip", "left_ankle", "right_ankle"],
+    "foot_lift": ["left_shoulder", "right_shoulder", "left_hip", "right_hip", "left_ankle", "right_ankle"],
+    "left_knee_offset": ["left_hip", "left_knee", "left_ankle"],
+    "right_knee_offset": ["right_hip", "right_knee", "right_ankle"],
+    "left_knee_angle_2d": ["left_hip", "left_knee", "left_ankle"],
+    "trunk_lean_2d": ["left_shoulder", "left_hip"]
+  }
+}

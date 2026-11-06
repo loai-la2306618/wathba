@@ -1,15 +1,31 @@
 {
-  "package": "@mediapipe/tasks-vision",
-  "version": "0.10.32",
-  "npm_integrity": "sha512-3tiAZnmKloYnRXYoO3dKltTUGnqeCwzC4lV03uY0vCsE+aveJTyEVQyZHOlQGQNsjK+gRHzkf9q08C99Qm2K0Q==",
-  "model_url": "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task",
+  "onnxruntime-web": {
+    "version": "1.30.0",
+    "npm_integrity": "sha512-q0y+JrrtukXSzsBWEMccVfqX25LRmosXHF+CaRJmg8pZClzcV7svNc4rKY3jL02Vb7QmRMDs1SigqR4CXAfKYQ==",
+    "license": "MIT"
+  },
+  "models": {
+    "yolov8n-pose": {
+      "repository": "Xenova/yolov8n-pose",
+      "revision": "da4224085e2f6ce4c9ff9b670e28765194619db2",
+      "license": "AGPL-3.0"
+    },
+    "movenet-singlepose-lightning": {
+      "repository": "Xenova/movenet-singlepose-lightning",
+      "revision": "ed0f314bb7356fd1dbf1e4f52c2d40791bf6534f",
+      "license": "Apache-2.0"
+    }
+  },
   "files": {
-    "LICENSE": "8707eef0533987efc5b155d64761eeb6e20793f50b9bd1a68dad1cf4719d0ed8",
-    "pose_landmarker_full.task": "5134a3aad27a58b93da0088d431f366da362b44e3ccfbe3462b3827a839011b1",
-    "vision_bundle.mjs": "de83c48ff329717a27aeb528d5ef5f47f077c628a5302dc483aca5b513e7464b",
-    "wasm/vision_wasm_nosimd_internal.wasm": "924274fcd5ac8985f6570a8573e7971b7bd2d580ba1b8f3beb0ba8f95db6347c",
-    "wasm/vision_wasm_nosimd_internal.js": "9f8fc960e363f0fb2f42f7937b97ae9cf9a5630490f71031fa90caa9bb121938",
-    "wasm/vision_wasm_internal.wasm": "cb3ec20026a9aecc2a81a93c25630ceb5389297ddb7a5f0bd61dd09cde606b9b",
-    "wasm/vision_wasm_internal.js": "6f6b86509cf9e163ea1cfec7edc8cf53732699c04781e4c21c557c1ba402310e"
+    "models/movenet-singlepose-lightning/config.json": "dddf6d4409af28ffd04284d00f4f06b2dc3f0615ab2657fd70e5cb1a6e70137d",
+    "models/movenet-singlepose-lightning/model.onnx": "1ad4f8d6c2f776a9967db3993c9ca740bc350104f9d37c151dc183fc29a464ad",
+    "models/yolov8n-pose/config.json": "005945fdfc71f2716e24c1db8ea67994e95fb58206c2750ed6ea4011d7a23925",
+    "models/yolov8n-pose/model.onnx": "04f6d2416266f2aba6c5ba8b26de33ed9eba3279f972ac02e33f9f1366547586",
+    "models/yolov8n-pose/model_quantized.onnx": "8fc1edb4977c37bf8b8a6c4cfd1dca7a0b46a67d6ef33088ac69e76e0ea84270",
+    "models/yolov8n-pose/preprocessor_config.json": "ab3bdd56daa5f2d59ec8f8723ae8bdf4ef28cb067d3688e99932c21bcb1fe151",
+    "ort/LICENSE": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
+    "ort/ort-wasm-simd-threaded.mjs": "e13f7f94fc51b4ca72b12faeb1ee95f4ace6dfbc8939bc718aabdc0a27c4299b",
+    "ort/ort-wasm-simd-threaded.wasm": "3398c10d07d229bd91b364548e130e0e51a8e5704b88c7c083ebbeb78842dee2",
+    "ort/ort.wasm.min.mjs": "219e6a1fc8a9938268d18efca3c91d310bd2f4a59bbd13744df5b2b7fc6cee3b"
   }
 }

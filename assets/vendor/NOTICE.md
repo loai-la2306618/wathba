@@ -1,10 +1,15 @@
-# Google MediaPipe assets
+# Browser pose runtime and models
 
-Unmodified runtime from `@mediapipe/tasks-vision@0.10.32`, published by Google and licensed Apache-2.0. See LICENSE. The npm package integrity and per-file SHA256 hashes are recorded in manifest.json.
+Installed by `scripts/setup_browser_assets.py`. Every file is pinned by SHA256 in `manifest.json`. The files are served locally from `/vendor/`; no inference API is called.
 
-Pretrained pose model: Google MediaPipe Pose Landmarker Full, float16, version 1.
-Source: https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task
-Model SHA256: 5134a3aad27a58b93da0088d431f366da362b44e3ccfbe3462b3827a839011b1
-Documentation: https://developers.google.com/mediapipe/solutions/vision/pose_landmarker/web_js
+| Files | Source | Licence |
+| --- | --- | --- |
+| `ort/` | `onnxruntime-web@1.30.0` (npm, integrity-checked): `ort.wasm.min.mjs`, `ort-wasm-simd-threaded.{mjs,wasm}` | MIT (`ort/LICENSE`) |
+| `models/yolov8n-pose/` (`model_quantized.onnx` for detection, `model.onnx` for keypoints) | [Xenova/yolov8n-pose](https://huggingface.co/Xenova/yolov8n-pose) @ `da4224085e2f6ce4c9ff9b670e28765194619db2`, ONNX export of Ultralytics YOLOv8n-pose | **AGPL-3.0** |
+| `models/movenet-singlepose-lightning/` | [Xenova/movenet-singlepose-lightning](https://huggingface.co/Xenova/movenet-singlepose-lightning) @ `ed0f314bb7356fd1dbf1e4f52c2d40791bf6534f`, ONNX export of Google MoveNet SinglePose Lightning | Apache-2.0 |
 
-Wathba does not retrain these networks. It fits a separate statistical exercise-comparison reference to the therapist-designated recording. Estimated body coordinates do not constitute calibrated clinical motion capture.
+ViTPose ([usyd-community/vitpose-base-simple](https://huggingface.co/usyd-community/vitpose-base-simple) @ `a93ac0c67e0b7e2c55287d21d4c460c8f3c54d45`, Apache-2.0) is not served to browsers. The optional backend loads it through `transformers` at that revision.
+
+**AGPL-3.0 notice.** The YOLOv8n-pose weights are AGPL-3.0, as published on Hugging Face. Serving them to users' browsers distributes them, and offering the app over a network brings the AGPL network clause into play. Anyone deploying Wathba must either comply with AGPL-3.0 for the combined work (including offering the corresponding source) or obtain an Ultralytics enterprise licence. Alternatively, they can remove YOLOv8n-pose: the engine then runs MoveNet on the full frame, in an explicitly degraded single-person mode.
+
+Wathba does not retrain these networks. All three models output 17 COCO keypoints in 2D image coordinates with model-specific scores, and no depth.

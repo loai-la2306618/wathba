@@ -82,6 +82,33 @@ def feedback(session_id, text):
     return session
 
 
+def attention_reasons(answers):
+    """Self-reported answers the physiotherapist should see first. Not a diagnosis."""
+    reasons = []
+    if (answers.get("pain_after") or 0) >= 5:
+        reasons.append("pain_after")
+    if answers.get("knee_unstable"):
+        reasons.append("knee_unstable")
+    if answers.get("swelling"):
+        reasons.append("swelling")
+    return reasons
+
+
+def check_in(session_id, answers):
+    """Store the patient's post-exercise answers with the session (replacing earlier answers)."""
+    from datetime import UTC, datetime
+    with LOCK:
+        session = load(session_id)
+        record = {**answers, "submitted_at": datetime.now(UTC).isoformat()}
+        record["attention"] = attention_reasons(record)
+        session["patient_check_in"] = record
+        # Existing report fields keep working for older readers.
+        session["reported_pain"] = answers.get("pain_after")
+        session["symptoms"] = answers.get("notes", "")[:2000]
+        save(session)
+    return session
+
+
 def load_plan():
     from .motion import Plan
     path = root() / "plan.json"

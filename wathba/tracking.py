@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 
 from . import storage
-from .assessment import pose_features, normalise_frontal_height
+from .assessment import pose_features, normalise_frontal_height, valid
 from .inference import DETECTOR_ID, POSE_ID, PoseTracker, models
 from .media import draw_pose, encode_mp4, open_video
 
@@ -123,7 +123,7 @@ def render_overlay(source, output, record, samples, progress=lambda *_: None, fl
                 while cursor + 1 < len(samples) and samples[cursor + 1]["time"] <= t:
                     cursor += 1
                 s = samples[cursor]
-                points, scores = s["points"], s["scores"]
+                points, scores, reliable = s["points"], s["scores"], s.get("reliable")
                 if cursor + 1 < len(samples):
                     following = samples[cursor + 1]
                     delta = following["time"] - s["time"]
@@ -131,13 +131,15 @@ def render_overlay(source, output, record, samples, progress=lambda *_: None, fl
                         alpha = min(1, max(0, (t - s["time"]) / delta))
                         points = (np.array(points) * (1 - alpha) + np.array(following["points"]) * alpha).tolist()
                         scores = np.minimum(scores, following["scores"]).tolist()
+                        if reliable is not None and following.get("reliable") is not None:
+                            reliable = [a and b for a, b in zip(reliable, following["reliable"])]
                 frame = cv2.resize(frame, size)
                 primary = s.get("primary_feature", "knee_angle")
                 v = s["features"].get(primary)
                 caption = ("Tracking uncertain" if v is None else f"Hip height: {v:.2f}") if primary == "hip_height" else None
                 review = any(f["start"] <= t <= f["end"] and f["kind"] not in ("tracking", "assessment") for f in (flags or []))
                 parts = {'left':'grey','right':'grey','trunk':'grey'}
-                if reference and s.get('confidence',0)>=.45:
+                if reference and valid(s, primary):
                     parts.update(left='green',trunk='green')
                 for flag in flags or []:
                     if flag['start'] <= t <= flag['end']:
@@ -145,7 +147,7 @@ def render_overlay(source, output, record, samples, progress=lambda *_: None, fl
                             part = 'trunk' if finding['feature']=='torso_lean' else 'left' if finding['feature']=='knee_offset' else None
                             if part:parts[part]=finding.get('severity','yellow')
                             elif finding['kind']=='range':parts.update(left=finding.get('severity','yellow'),right=finding.get('severity','yellow'))
-                writer.write(draw_pose(frame, points, scores, s["angle"], t, caption=caption, review=review, parts=parts))
+                writer.write(draw_pose(frame, points, scores, s["angle"], t, caption=caption, review=review, parts=parts, reliable=reliable))
             i += 1
     finally:
         writer.release()

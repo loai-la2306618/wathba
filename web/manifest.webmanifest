@@ -1,0 +1,17 @@
+{
+  "name": "Wathba · وثبة",
+  "short_name": "Wathba",
+  "description": "Guided home rehabilitation with body tracking and physiotherapist review.",
+  "start_url": "/?screen=home",
+  "scope": "/",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "portrait",
+  "background_color": "#34363D",
+  "theme_color": "#34363D",
+  "icons": [
+    {"src": "/assets/icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "/assets/icons/icon-512.png", "sizes": "512x512", "type": "image/png"},
+    {"src": "/assets/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ]
+}
