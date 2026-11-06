@@ -33,7 +33,7 @@ def save(session):
     with LOCK:
         path = folder(session["id"]) / "report.json"
         tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(session, ensure_ascii=False, indent=2, allow_nan=False))
+        tmp.write_text(json.dumps(session, ensure_ascii=False, indent=2, allow_nan=False), encoding='utf-8')
         tmp.replace(path)
         from .reporting import write_report
         write_report(session, path.parent)
@@ -44,7 +44,7 @@ def load(session_id):
     with LOCK:
         from . import remote
         if remote.enabled():remote.ensure(f"{session_id}/report.json",check=True)
-        data=json.loads((folder(session_id) / "report.json").read_text())
+        data=json.loads((folder(session_id) / "report.json").read_text(encoding='utf-8'))
         return remote.rebase(data) if remote.enabled() else data
 
 
@@ -54,7 +54,7 @@ def sessions():
     result = []
     for path in root().glob("*/report.json"):
         try:
-            session = json.loads(path.read_text())
+            session = json.loads(path.read_text(encoding='utf-8'))
             result.append(remote.rebase(session) if remote.enabled() else session)
         except (ValueError, OSError):
             continue
@@ -127,14 +127,14 @@ def load_plan():
     path = root() / "plan.json"
     from . import remote
     if remote.enabled():remote.ensure("plan.json",refresh=True)
-    return Plan(**json.loads(path.read_text())) if path.exists() else Plan()
+    return Plan(**json.loads(path.read_text(encoding='utf-8'))) if path.exists() else Plan()
 
 
 def save_plan(plan):
     with LOCK:
         path = root() / "plan.json"
         tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(plan.dict()))
+        tmp.write_text(json.dumps(plan.dict()), encoding='utf-8')
         tmp.replace(path)
         from . import remote
         remote.persist_file(path)
@@ -144,7 +144,7 @@ def references():
     items = []
     for path in root().glob("*/motion-model.json"):
         try:
-            model = json.loads(path.read_text())
+            model = json.loads(path.read_text(encoding='utf-8'))
             items.append(model)
         except (ValueError, OSError):
             continue
@@ -155,7 +155,7 @@ def save_reference(model):
     path = folder(model["reference_session_id"]) / "motion-model.json"
     with LOCK:
         tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(model, ensure_ascii=False, indent=2, allow_nan=False))
+        tmp.write_text(json.dumps(model, ensure_ascii=False, indent=2, allow_nan=False), encoding='utf-8')
         tmp.replace(path)
     return str(path)
 
@@ -164,4 +164,4 @@ def load_reference(session_id):
     folder(session_id)
     from . import remote
     if remote.enabled():remote.ensure(f"{session_id}/motion-model.json")
-    return json.loads((folder(session_id) / "motion-model.json").read_text())
+    return json.loads((folder(session_id) / "motion-model.json").read_text(encoding='utf-8'))

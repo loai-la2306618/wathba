@@ -32,7 +32,7 @@ def extract(path, plan, progress=lambda *_: None):
     stored = cache / f"{key}.json"
     if stored.is_file():
         cap.release()
-        record = json.loads(stored.read_text())
+        record = json.loads(stored.read_text(encoding='utf-8'))
         record["cache_hit"] = True
         return record
     tracker = PoseTracker(plan.subject_roi)
@@ -80,7 +80,7 @@ def extract(path, plan, progress=lambda *_: None):
               "detector_revision": getattr(detector.config, "_commit_hash", None),
               "extraction_seconds": round(time.monotonic() - start, 3), "cache_hit": False}
     temp = stored.with_suffix(".tmp")
-    temp.write_text(json.dumps(record, allow_nan=False))
+    temp.write_text(json.dumps(record, allow_nan=False), encoding='utf-8')
     temp.replace(stored)
     return record
 

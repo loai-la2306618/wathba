@@ -23,9 +23,12 @@ def configure_ffmpeg():
     from .storage import root
     tools_dir = root() / "tools"
     tools_dir.mkdir(exist_ok=True)
-    link = tools_dir / "ffmpeg"
+    link = tools_dir / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
     if not link.exists():
-        link.symlink_to(imageio_ffmpeg.get_ffmpeg_exe())
+        try:
+            link.symlink_to(imageio_ffmpeg.get_ffmpeg_exe())
+        except OSError:  # Windows only allows symlinks with Developer Mode or admin rights.
+            shutil.copy2(imageio_ffmpeg.get_ffmpeg_exe(), link)
     os.environ["PATH"] = str(tools_dir) + os.pathsep + os.environ.get("PATH", "")
 
 

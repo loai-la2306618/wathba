@@ -59,7 +59,7 @@ def _reference_pointer(exercise):
     if not p.exists():
         return None
     try:
-        return json.loads(p.read_text()).get('id')
+        return json.loads(p.read_text(encoding='utf-8')).get('id')
     except (OSError, ValueError):
         return None
 
@@ -270,7 +270,7 @@ def create_app():
                 if request.reference:
                     target=storage.root()/('browser-reference.json' if request.exercise=='squat' else 'browser-reference-jump.json')
                     temporary=target.with_suffix('.tmp')
-                    temporary.write_text(json.dumps({'id':s['id']}))
+                    temporary.write_text(json.dumps({'id':s['id']}), encoding='utf-8')
                     temporary.replace(target)
                     remote.persist_session(s['id']);remote.persist_file(target)
                     return {'id':s['id'],'model':storage.load_reference(s['id'])}
