@@ -27,6 +27,7 @@ Rules:
 - Do not diagnose, do not say anything is injured, torn, healed or safe, and do not judge readiness to return to sport.
 - The reference match is a similarity to the therapist's demonstration, not a medical score.
 - If needs_attention is true, clearly tell the patient to stop if symptoms get worse and to contact their physiotherapist before the next session.
+- State the reported pain score exactly. Never say there was no pain when the score after the exercise is above 0.
 - Be warm, short and concrete: 3 to 5 sentences, no headings, no lists, no markdown.
 - Write in {language} only."""
 
@@ -45,6 +46,7 @@ SYSTEM_FEEDBACK_AR = """أنت مساعد وثبة لكتابة ملاحظات �
 - استخدم فقط الحقائق الواردة في البيانات. لا تخترع أرقامًا أو قياسات أو تواريخ أو أحداثًا.
 - لا تشخّص، ولا تقل إن شيئًا مصاب أو ممزق أو التأم أو آمن، ولا تحكم على الجاهزية للعودة إلى الرياضة، ولا تلمّح إلى وجود مشكلة طبية.
 - نسبة التطابق مع المرجع هي تشابه مع عرض المعالج وليست درجة طبية.
+- اذكر درجة الألم المسجّلة كما هي تمامًا، ولا تقل أبدًا إنه لم يكن هناك ألم إذا كانت درجة الألم بعد التمرين أعلى من 0.
 - إذا كانت «يحتاج إلى متابعة» = نعم، اطلب من المريض بوضوح التوقف إذا ساءت الأعراض والتواصل مع أخصائي العلاج الطبيعي قبل الجلسة القادمة.
 - اكتب بلطف وإيجاز ووضوح: من 3 إلى 5 جمل، بدون عناوين أو قوائم أو رموز.
 - اكتب بالعربية الفصحى فقط، ولا تكتب أي كلمة إنجليزية أو اسم حقل من البيانات."""
@@ -115,6 +117,23 @@ CONTACT = {'en': r'contact|talk|speak|tell|consult|ask|check with|let .* know|re
 HEDGE = {'en': r"\b(no|not|never|don't|do not|cannot|can't|unable|without|whether|if|unless|none)\b",
          'ar': r'(^|\s)(لا|لم|لن|ليس|ليست|غير|بدون|دون|إذا|اذا|لو|هل|ما لم)(\s|$)'}
 TASHKEEL = re.compile('[\u064B-\u0652\u0640]')
+
+
+# Summaries that deny pain the patient reported. Run on text without diacritics.
+NO_PAIN = {'en': r"\b(?:no|without|zero|free of|free from)\s+(?:any\s+)?pain\b|\bpain[- ]free\b|\b(?:not|never|didn't|did not|wasn't|weren't)\b[^.!?]{0,30}\bpain\b",
+           'ar': r'(?<![؀-ۿ])[وف]?(?:بدون|دون|بلا|من غير|عدم|لا يوجد|لا توجد|لا تشعر|لم تشعر|لم يشعر|لم تسجل|لم يسجل|لم تذكر|لم يذكر|لم يظهر|لم تظهر|لم يكن|لم تعان|لم يعان|خال|خالية)(?![؀-ۿ])[^.؟!]{0,30}ألم'}
+DURING = {'en': r'\b(?:during|while)\b', 'ar': r'أثناء|خلال'}
+# Questions only the physiotherapist can answer, whatever the session facts say.
+CLINICAL_QUESTION = {
+    'en': r'\b(?:heal(?:ed|ing)?|recover(?:ed|y|ing)?|return|go back|get back|back to|football|soccer|sports?|play|run|running|weights?|load|heavier|more (?:reps|repetitions)|new exercises?|safe)\b',
+    'ar': r'التأم|شفي|تعافي|العودة|أعود|ارجع|أرجع|كرة القدم|رياض|ألعب|الجري|أجري|أركض|وزن|الحمل|أزيد|زيادة|تمرين جديد|تمارين جديدة|آمن',
+}
+
+
+def asks_clinical_decision(question):
+    """True for healing, return-to-sport and progression questions, in either language."""
+    text = TASHKEEL.sub('', question or '')
+    return any(re.search(pattern, text, re.I) for pattern in CLINICAL_QUESTION.values())
 
 
 def sentences(text):
@@ -298,6 +317,12 @@ def check(text, facts, lang, task, expect=None):
                     scores['consistent_with_answers'] = False
                     issues.append(f'contradicts patient answer ({key} = no)')
                     break
+    if (ci.get('pain_after_exercise_0_to_10') or 0) > 0:
+        for sentence in sentences(text):
+            if re.search(NO_PAIN[lang], sentence, re.I) and not re.search(DURING[lang], sentence, re.I):
+                scores['consistent_with_answers'] = False
+                issues.append('contradicts patient answer (pain reported)')
+                break
     scores.setdefault('consistent_with_answers', True)
     # Feedback must refer when the patient's answers need attention; Q&A when the question asks for a clinical decision.
     needs_physio = (task == 'feedback' and facts.get('needs_attention')) or expect.get('defer_to_physio')

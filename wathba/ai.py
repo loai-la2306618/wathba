@@ -53,7 +53,8 @@ def answer(session, question, lang):
     if not question:
         raise ValueError('Type a question first.')
     facts = coach.session_facts(session)
-    out = _checked(coach.answer_messages(facts, question, lang), facts, lang, 'qa', max_new_tokens=160)
+    expect = {'defer_to_physio': True} if coach.asks_clinical_decision(question) else None
+    out = _checked(coach.answer_messages(facts, question, lang), facts, lang, 'qa', expect, max_new_tokens=160)
     if not out['checked']:
         out['text'] = FALLBACK_ANSWER[lang]
         out['fallback'] = True

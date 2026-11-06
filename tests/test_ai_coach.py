@@ -35,6 +35,48 @@ def test_target_mention_is_not_a_wrong_count_and_number_words_count():
     assert ok['scores']['correct_repetitions'] and ok['scores']['mentions_repetitions'], ok['issues']
 
 
+LOW_PAIN = {'repetitions_completed': 3, 'tracking_coverage_percent': 90, 'needs_attention': False,
+            'patient_check_in': {'pain_during_exercise': False, 'pain_after_exercise_0_to_10': 2}}
+
+
+@pytest.mark.parametrize('text,lang', [
+    ('You completed 3 repetitions. No pain reported, keep up the good work.', 'en'),
+    ('You finished 3 repetitions without any pain.', 'en'),
+    ('You did not report any pain and completed 3 repetitions.', 'en'),
+    ('أتممت 3 تكرارات بسلاسة وبدون ألم.', 'ar'),
+    ('أكملت 3 تكرارات ولم تشعر بأي ألم.', 'ar'),
+])
+def test_summary_cannot_deny_reported_pain(text, lang):
+    result = coach.check(text, LOW_PAIN, lang, 'feedback')
+    assert 'contradicts patient answer (pain reported)' in result['issues'], result['issues']
+    assert result['scores']['consistent_with_answers'] is False
+
+
+@pytest.mark.parametrize('text,lang', [
+    ('You completed 3 repetitions with no pain during the exercise, and pain of 2 out of 10 afterwards.', 'en'),
+    ('أكملت 3 تكرارات دون ألم أثناء التمرين، وسجّلت ألمًا بدرجة 2 من 10 بعده.', 'ar'),
+    ('You completed 3 repetitions and reported pain of 2 out of 10.', 'en'),
+])
+def test_accurate_pain_statements_are_allowed(text, lang):
+    result = coach.check(text, LOW_PAIN, lang, 'feedback')
+    assert result['scores']['consistent_with_answers'], result['issues']
+
+
+def test_no_pain_is_fine_when_the_patient_reported_none():
+    facts = {**LOW_PAIN, 'patient_check_in': {'pain_during_exercise': False, 'pain_after_exercise_0_to_10': 0}}
+    assert coach.check('You completed 3 repetitions with no pain.', facts, 'en', 'feedback')['scores']['consistent_with_answers']
+
+
+@pytest.mark.parametrize('question,expected', [
+    ('Can I go back to football?', True), ('Should I add more weight next session?', True), ('Is my knee healed?', True),
+    ('هل يمكنني العودة لكرة القدم؟', True), ('هل أزيد الوزن في الجلسة القادمة؟', True), ('هل التأم رباط ركبتي؟', True),
+    ('How many repetitions did I complete?', False), ('How much pain did I report?', False),
+    ('كم تكرارًا أكملت؟', False), ('كم كانت درجة الألم التي سجلتها؟', False),
+])
+def test_clinical_questions_are_recognised(question, expected):
+    assert coach.asks_clinical_decision(question) is expected
+
+
 def test_session_facts_use_only_measured_values():
     s = {'exercise': 'Squat', 'plan': {'side': 'Left', 'target_repetitions': 5}, 'repetitions': 3, 'duration': 25.4, 'coverage': 90.2,
          'match_score': {'value': 64}, 'cycles': [{'duration': 1.6}, {'duration': 1.8}, {'duration': 2.0}],
@@ -90,6 +132,48 @@ def test_unchecked_summary_is_withheld_and_question_falls_back(tmp_path, monkeyp
     q = client.post(f'/api/session/{sid}/ai/ask', json={'consent': True, 'lang': 'ar', 'question': 'هل التأم الرباط؟'}).json()
     assert q['fallback'] and q['text'] == ai.FALLBACK_ANSWER['ar']
     assert storage.load(sid)['ai']['questions'][0]['question'] == 'هل التأم الرباط؟'
+
+
+@pytest.mark.parametrize('lang,reply', [
+    ('en', 'You completed 3 repetitions with no pain. Contact your physiotherapist before your next session.'),
+    ('ar', 'أكملت 3 تكرارات بدون ألم. تواصل مع أخصائي العلاج الطبيعي قبل جلستك القادمة.'),
+])
+def test_summary_denying_reported_pain_is_withheld(tmp_path, monkeypatch, lang, reply):
+    client, sid = session_with(tmp_path, monkeypatch)
+    monkeypatch.setattr(llm, 'available', lambda kind='text': (True, ''))
+    calls = fake_llm(monkeypatch, [reply])
+    r = client.post(f'/api/session/{sid}/ai/summary', json={'consent': True, 'lang': lang}).json()
+    assert r['checked'] is False and r['text'] is None and len(calls) == 2
+    assert 'contradicts patient answer (pain reported)' in r['issues']
+
+
+@pytest.mark.parametrize('lang,question,reply', [
+    ('en', 'Can I go back to football?', 'I do not have that information.'),
+    ('ar', 'هل يمكنني العودة لكرة القدم؟', 'لا تملك هذه المعلومة.'),
+])
+def test_clinical_question_without_referral_gets_the_fixed_referral(tmp_path, monkeypatch, lang, question, reply):
+    client, sid = session_with(tmp_path, monkeypatch)
+    monkeypatch.setattr(llm, 'available', lambda kind='text': (True, ''))
+    fake_llm(monkeypatch, [reply])
+    r = client.post(f'/api/session/{sid}/ai/ask', json={'consent': True, 'lang': lang, 'question': question}).json()
+    assert r['fallback'] and r['text'] == ai.FALLBACK_ANSWER[lang]
+
+
+def test_clinical_question_with_a_referral_keeps_the_model_answer(tmp_path, monkeypatch):
+    client, sid = session_with(tmp_path, monkeypatch)
+    monkeypatch.setattr(llm, 'available', lambda kind='text': (True, ''))
+    answer = 'Please ask your physiotherapist before you go back to football.'
+    fake_llm(monkeypatch, [answer])
+    r = client.post(f'/api/session/{sid}/ai/ask', json={'consent': True, 'lang': 'en', 'question': 'Can I go back to football?'}).json()
+    assert r['checked'] and r['text'] == answer and not r.get('fallback')
+
+
+def test_ordinary_question_does_not_need_a_referral(tmp_path, monkeypatch):
+    client, sid = session_with(tmp_path, monkeypatch)
+    monkeypatch.setattr(llm, 'available', lambda kind='text': (True, ''))
+    fake_llm(monkeypatch, ['أكملت 3 تكرارات.'])
+    r = client.post(f'/api/session/{sid}/ai/ask', json={'consent': True, 'lang': 'ar', 'question': 'كم تكرارًا أكملت؟'}).json()
+    assert r['checked'] and r['text'] == 'أكملت 3 تكرارات.' and not r.get('fallback')
 
 
 def test_consent_and_availability_are_enforced(tmp_path, monkeypatch):
