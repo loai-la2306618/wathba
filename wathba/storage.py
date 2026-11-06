@@ -94,12 +94,14 @@ def attention_reasons(answers):
     return reasons
 
 
-def check_in(session_id, answers):
+def check_in(session_id, answers, *, workout=None):
     """Store the patient's post-exercise answers with the session (replacing earlier answers)."""
     from datetime import UTC, datetime
     with LOCK:
         session = load(session_id)
         record = {**answers, "submitted_at": datetime.now(UTC).isoformat()}
+        if workout:
+            record.update(scope="workout", workout_id=workout["id"], session_ids=workout["session_ids"])
         record["attention"] = attention_reasons(record)
         session["patient_check_in"] = record
         # Existing report fields keep working for older readers.
@@ -107,6 +109,17 @@ def check_in(session_id, answers):
         session["symptoms"] = answers.get("notes", "")[:2000]
         save(session)
     return session
+
+
+def workout_check_in(session_ids, answers):
+    """One whole-workout self-report, linked to each included exercise recording."""
+    with LOCK:
+        ids = list(dict.fromkeys(session_ids))
+        sessions_to_update = [load(sid) for sid in ids]
+        if any(s.get("kind") == "reference" for s in sessions_to_update):
+            raise ValueError("Therapist references cannot be included in a workout evaluation.")
+        workout = {"id": uuid.uuid4().hex, "session_ids": ids}
+        return [check_in(sid, answers, workout=workout) for sid in ids]
 
 
 def load_plan():

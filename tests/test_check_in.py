@@ -47,3 +47,33 @@ def test_invalid_answers_are_rejected(tmp_path, monkeypatch):
     for bad in ({'pain_after': 11}, {'pain_after': -1}, {'pain_locations': ['shoulder']}, {'difficulty': 'extreme'}, {'notes': 'x'*1001}):
         assert client.post(f'/api/session/{sid}/check-in', json=bad).status_code == 422
     assert client.post('/api/session/' + 'f'*32 + '/check-in', json={}).status_code == 404
+
+
+def test_workout_evaluation_applies_once_to_all_completed_exercises(tmp_path, monkeypatch):
+    client, first = make_session(tmp_path, monkeypatch)
+    second = "d" * 32
+    other = {**storage.load(first), "id": second, "exercise": "Jump"}
+    (tmp_path / second).mkdir()
+    storage.save(other)
+    response = client.post('/api/workout/check-in', json={"session_ids": [first, second, first], "pain_after": 6,
+                                                       "pain_during": True, "notes": " Whole session "})
+    assert response.status_code == 200
+    answer = response.json()["check_in"]
+    assert answer["scope"] == "workout"
+    assert answer["session_ids"] == [first, second]
+    assert answer["attention"] == ["pain_after"]
+    for sid in [first, second]:
+        saved = storage.load(sid)
+        assert saved["patient_check_in"]["workout_id"] == answer["workout_id"]
+        assert saved["reported_pain"] == 6
+        assert saved["symptoms"] == "Whole session"
+        assert "Whole-workout evaluation covering 2 exercise recordings" in render_report(saved)
+
+
+def test_invalid_workout_is_rejected_before_updating_any_exercise(tmp_path, monkeypatch):
+    client, sid = make_session(tmp_path, monkeypatch)
+    response = client.post('/api/workout/check-in', json={"session_ids": [sid, "f" * 32], "pain_after": 4})
+    assert response.status_code == 400
+    assert "patient_check_in" not in storage.load(sid)
+    assert client.post('/api/workout/check-in', json={"session_ids": []}).status_code == 422
+    assert client.post('/api/workout/check-in', json={"session_ids": [sid], "pain_after": 11}).status_code == 422
