@@ -186,7 +186,7 @@ def test_summary_denying_reported_pain_is_withheld(tmp_path, monkeypatch, lang, 
     monkeypatch.setattr(llm, 'available', lambda kind='text': (True, ''))
     calls = fake_llm(monkeypatch, [reply])
     r = client.post(f'/api/session/{sid}/ai/summary', json={'consent': True, 'lang': lang}).json()
-    assert r['checked'] is False and r['text'] is None and len(calls) == 2
+    assert r['checked'] is False and r['text'] is None and len(calls) == ai.ATTEMPTS
     assert 'contradicts patient answer (pain reported)' in r['issues']
 
 

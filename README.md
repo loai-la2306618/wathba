@@ -97,7 +97,7 @@ Every reply is checked by `wathba/coach.py` before it is shown:
 - the requested language, with no third-script characters and no leaked data field names;
 - a short length.
 
-A failing summary is regenerated once and withheld if it still fails; a failing answer is replaced by a fixed referral. When the answers need attention and the model omits the referral, the app adds a fixed safety sentence instead of relying on the model. Arabic answers use Arabic instructions and Arabic fact labels.
+A failing summary is regenerated up to twice and withheld if it still fails; a failing answer is replaced by a fixed referral. When the answers need attention and the model omits the referral, the app adds a fixed safety sentence instead of relying on the model. Arabic answers use Arabic instructions and Arabic fact labels.
 
 ```sh
 pip install -r requirements-qwen.txt      # CUDA 12.x PyTorch, transformers 4.57.1, accelerate, bitsandbytes

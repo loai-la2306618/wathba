@@ -1,7 +1,7 @@
 """Wathba AI coach: Qwen3 session summaries, patient Q&A and Qwen3-VL frame review.
 
 Every model answer is checked by wathba/coach.py before it is returned. A failed
-answer is regenerated once with another seed; if it still fails, the summary is
+answer is regenerated with other seeds, up to ATTEMPTS tries; if it still fails, the summary is
 withheld (with the reasons) and a question gets a fixed referral to the
 physiotherapist instead of an unchecked answer.
 """
@@ -14,7 +14,7 @@ FALLBACK_ANSWER = {
     'en': "I can't answer that reliably from this session's measurements. Please ask your physiotherapist.",
     'ar': 'لا أستطيع الإجابة عن ذلك بشكل موثوق من قياسات هذه الجلسة. يُرجى سؤال أخصائي العلاج الطبيعي.',
 }
-ATTEMPTS = 2
+ATTEMPTS = 3
 # Fixed safety advice: added by the app (not left to the model) when the patient's answers need attention.
 SAFETY_NOTE = {
     'en': 'Because you reported pain, instability or swelling, stop if it gets worse and contact your physiotherapist before your next session.',
