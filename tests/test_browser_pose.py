@@ -9,6 +9,13 @@ from wathba.pose_schema import JOINTS, PIPELINE, legacy_mediapipe_row, replay_ro
 
 MOVENET = 'movenet-singlepose-lightning'
 YOLO = 'yolov8n-pose'
+
+
+def test_missing_joints_can_be_saved_as_json():
+    from wathba.storage import json_safe
+    safe = json_safe({'samples': [{'points': [[1.0, math.nan], [math.inf, 2.0]], 'scores': (0.5, 0.0)}]})
+    assert safe == {'samples': [{'points': [[1.0, None], [None, 2.0]], 'scores': [0.5, 0.0]}]}
+
 BODY = {'left_shoulder': (.4, .2), 'right_shoulder': (.6, .2), 'left_hip': (.45, .5), 'right_hip': (.55, .5),
         'left_knee': (.4, .7), 'right_knee': (.6, .7), 'left_ankle': (.4, .9), 'right_ankle': (.6, .9)}
 

@@ -16,3 +16,4 @@ uv.lock
 build/
 dist/
 node_modules/
+demo-media/

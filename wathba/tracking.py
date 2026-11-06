@@ -129,7 +129,7 @@ def render_overlay(source, output, record, samples, progress=lambda *_: None, fl
                     delta = following["time"] - s["time"]
                     if points is not None and following["points"] is not None and delta <= .4:
                         alpha = min(1, max(0, (t - s["time"]) / delta))
-                        points = (np.array(points) * (1 - alpha) + np.array(following["points"]) * alpha).tolist()
+                        points = (np.array(points, float) * (1 - alpha) + np.array(following["points"], float) * alpha).tolist()
                         scores = np.minimum(scores, following["scores"]).tolist()
                         if reliable is not None and following.get("reliable") is not None:
                             reliable = [a and b for a, b in zip(reliable, following["reliable"])]

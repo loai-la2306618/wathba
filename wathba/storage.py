@@ -1,6 +1,7 @@
 """A shared demo workspace. IDs are server generated, and writes are atomic."""
 
 import json
+import math
 import os
 import re
 import threading
@@ -29,11 +30,22 @@ def new_folder():
     return session_id, path
 
 
+def json_safe(value):
+    """Missing joints are NaN in memory. JSON has no NaN, so they are stored as null."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {k: json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_safe(v) for v in value]
+    return value
+
+
 def save(session):
     with LOCK:
         path = folder(session["id"]) / "report.json"
         tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(session, ensure_ascii=False, indent=2, allow_nan=False), encoding='utf-8')
+        tmp.write_text(json.dumps(json_safe(session), ensure_ascii=False, indent=2, allow_nan=False), encoding='utf-8')
         tmp.replace(path)
         from .reporting import write_report
         write_report(session, path.parent)

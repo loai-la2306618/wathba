@@ -110,7 +110,7 @@ def render_guide(session, output):
             i = min(len(usable) - 2, max(0, int(np.searchsorted(timestamps, t) - 1)))
             a, b = usable[i], usable[i + 1]
             alpha = min(1, max(0, (t - a["time"]) / (b["time"] - a["time"])))
-            points = np.array(a["points"]) * (1 - alpha) + np.array(b["points"]) * alpha
+            points = np.array(a["points"], float) * (1 - alpha) + np.array(b["points"], float) * alpha
             scores = np.minimum(a["scores"], b["scores"])
             writer.write(draw_human(points, scores, session["plan"]["side"]))
     finally:

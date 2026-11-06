@@ -90,7 +90,8 @@ def legacy_reference_source(exercise="squat"):
 
 
 def prepare_library():
-    folder=Path(os.getenv('WATHBA_LIBRARY_DIR',str(Path.home()/'Downloads/excercise videos')))
+    bundled=Path(__file__).resolve().parents[1]/'demo-media'  # Clips shipped with the deployed demo.
+    folder=Path(os.getenv('WATHBA_LIBRARY_DIR') or (bundled if bundled.is_dir() else Path.home()/'Downloads/excercise videos'))
     out=storage.root()/'library';out.mkdir(exist_ok=True)
     for role, rel in [('therapist','therapist/WhatsApp Video 2026-11-05 at 22.44.19.mp4'),('patient','patient/WhatsApp Video 2026-11-05 at 22.44.18.mp4'),('therapist-jump','therapist/WhatsApp Video 2026-11-05 at 22.44.20.mp4'),('patient-jump','patient/WhatsApp Video 2026-11-05 at 22.44.23.mp4')]:
         source=folder/rel;target=out/(f'{role}.mp4' if role.endswith('-jump') else f'{role}-squat.mp4')
@@ -99,6 +100,19 @@ def prepare_library():
             cap=cv2.VideoCapture(str(target));cap.set(cv2.CAP_PROP_POS_MSEC,1500);ok,frame=cap.read();cap.release()
             if ok:cv2.imwrite(str(out/f'{role}.jpg'),frame)
     return out
+
+
+def seed_reference(library):
+    """Hosted disks are wiped on restart, so rebuild the squat reference from its saved tracking."""
+    rows=Path(__file__).resolve().parents[1]/'demo-media/therapist-squat.rows.json'
+    source=library/'therapist-squat.mp4'
+    if reference_id('squat') or not rows.is_file() or not source.is_file():
+        return
+    s=process_browser_video(source,json.loads(rows.read_text(encoding='utf-8')),None,True,'Therapist squat demonstration',exercise='squat')
+    target=storage.root()/'browser-reference.json'
+    temporary=target.with_suffix('.tmp')
+    temporary.write_text(json.dumps({'id':s['id']}), encoding='utf-8')
+    temporary.replace(target)
 
 
 def public_session(s):
@@ -174,6 +188,7 @@ class TrackingRequest(BaseModel):
 def create_app():
     configure_ffmpeg()
     library=prepare_library()
+    seed_reference(library)
     app=FastAPI(title='Wathba',docs_url=None,redoc_url=None)
     # Cross-origin isolation lets ONNX Runtime Web use multi-threaded WebAssembly
     # (SharedArrayBuffer). All app resources are same-origin. Remote-storage mode
