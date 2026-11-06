@@ -6,6 +6,17 @@ DOHA = ZoneInfo('Asia/Qatar')
 DAYS = (0, 1, 3, 5)  # Monday, Tuesday, Thursday, Saturday; demonstration only.
 
 
+def training_summary(sessions):
+    """Distinct Doha calendar days, Monday-start weeks and months with at least one recorded session."""
+    dates = sorted(datetime.fromisoformat(s['created_at']).astimezone(DOHA).date() for s in sessions)
+    if not dates:
+        return {'sessions': 0, 'days': 0, 'weeks': 0, 'months': 0, 'first': None, 'last': None}
+    return {'sessions': len(dates), 'days': len(set(dates)),
+            'weeks': len({d - timedelta(days=d.weekday()) for d in dates}),
+            'months': len({(d.year, d.month) for d in dates}),
+            'first': dates[0].isoformat(), 'last': dates[-1].isoformat()}
+
+
 def demo_program(sessions, target=5, now=None):
     now = (now or datetime.now(DOHA)).astimezone(DOHA)
     today = now.date()

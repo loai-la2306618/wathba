@@ -15,3 +15,4 @@ uv.lock
 *.egg-info/
 build/
 dist/
+node_modules/

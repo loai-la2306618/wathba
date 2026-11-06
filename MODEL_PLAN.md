@@ -1,3 +1,5 @@
+> **Superseded engine.** This audit describes the earlier MediaPipe delivery. MediaPipe has since been replaced by YOLOv8n-pose + MoveNet in the browser and an optional backend ViTPose check; see README "Motion assessment" and "Verification" for the current engine, the features that are no longer available, and the migration checks.
+
 # Wathba browser MediaPipe delivery audit
 
 Latest request: use the stacked therapist/patient guidance layout with navy/green logo colors and explain deeper movement analysis beyond landmark detection. Therapist and patient sources must remain separate; the designated therapist clip becomes the motion reference and visible guide.

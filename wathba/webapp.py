@@ -1,6 +1,7 @@
-"""Patient workout frontend with real browser MediaPipe tracking."""
+"""Patient workout frontend with browser pose tracking (YOLOv8n-pose + MoveNet) and a server ViTPose check."""
 
 import json
+import mimetypes
 import os
 from pathlib import Path
 import shutil
@@ -13,16 +14,36 @@ import imageio_ffmpeg
 from fastapi import FastAPI, File, HTTPException, UploadFile, Request
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from . import storage, remote
-from .browser_pose import process_browser_video
+from . import ai as ai_coach, llm, vitpose_service
+from .browser_pose import HEIGHT_NORMALISATION, process_browser_video
+from .pose_schema import LEGACY_MEDIAPIPE_ENGINE, MODELS, PIPELINE, replay_rows, unavailable_measurements
 from .media import configure_ffmpeg, open_video
 from .reporting import bundle
 from .analysis import session_analysis
 
 BASE = Path(__file__).resolve().parents[1]
 LOCK = threading.Lock()
+# Windows can map .mjs/.wasm to the wrong type from the registry; module workers
+# and WebAssembly streaming compilation require these exact types.
+mimetypes.add_type('text/javascript', '.mjs')
+mimetypes.add_type('text/javascript', '.js')
+mimetypes.add_type('application/wasm', '.wasm')
+mimetypes.add_type('application/json', '.json')
+mimetypes.add_type('application/manifest+json', '.webmanifest')
+SESSION_ENGINES = (PIPELINE, LEGACY_MEDIAPIPE_ENGINE)
+
+
+def env_number(name, default, low, high):
+    try:
+        value = float(os.getenv(name, default))
+    except ValueError:
+        return default
+    return min(high, max(low, value))
 
 
 def media_url(path):
@@ -30,18 +51,40 @@ def media_url(path):
     return '/media/' + path.relative_to(storage.root()).as_posix()
 
 
-def reference_id(exercise="squat"):
+def _reference_pointer(exercise):
     p = storage.root()/('browser-reference.json' if exercise == 'squat' else 'browser-reference-jump.json')
     if remote.enabled():remote.ensure(p,refresh=True) if remote.exists(p) else None
-    if p.exists():
-        value=json.loads(p.read_text()).get('id')
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text()).get('id')
+    except (OSError, ValueError):
+        return None
+
+
+def reference_id(exercise="squat"):
+    """The active reference, only if it was fitted with the current pose pipeline."""
+    value = _reference_pointer(exercise)
+    if value:
         try:
             model=storage.load_reference(value)
-            if model.get('pose_engine') == 'mediapipe-pose-landmarker-full' and model.get('height_normalisation') == 'static_torso_v1':
+            if model.get('pose_engine') == PIPELINE and model.get('height_normalisation') == HEIGHT_NORMALISATION:
                 return value
         except (OSError,ValueError,TypeError):
             pass
     return None
+
+
+def legacy_reference_source(exercise="squat"):
+    """Source video of a reference fitted by the removed MediaPipe engine, to re-fit it."""
+    value = _reference_pointer(exercise)
+    if not value or reference_id(exercise):
+        return None
+    try:
+        source = Path(storage.load(value)['source_video'])
+    except (OSError, ValueError, KeyError):
+        return None
+    return source if source.exists() or (remote.enabled() and remote.exists(source)) else None
 
 
 def prepare_library():
@@ -67,15 +110,39 @@ def public_session(s):
             'model':s['model'],'source':media_url(s['source_video']),'annotated':media_url(s['annotated_video']),
             'feedback':s['feedback'],'flags':[{**f,'clip':media_url(f['clip']),**{k:media_url(f[k]) for k in ('picture','reference_picture') if f.get(k)}} for f in s['flags']],
             'motion_analysis':session_analysis(s),'reference':s.get('reference_model'),'reference_source':ref_source,'report':media_url(storage.folder(s['id'])/'physio-report.html'),
-            'landmarks':s.get('browser_landmarks',[]),'limitations':s.get('limitations',[])}
+            'landmarks':replay_rows(s),'limitations':s.get('limitations',[]),
+            'pose_engine':s.get('pose_engine'),'keypoint_model':s.get('keypoint_model'),'detector':s.get('detector'),
+            'unavailable_measurements':s.get('unavailable_measurements',unavailable_measurements()),
+            'model_checks':s.get('model_checks',{}),'check_in':s.get('patient_check_in'),'ai':s.get('ai',{})}
 
 
 class ProgramRequest(BaseModel):
     target_repetitions: int = Field(ge=1,le=50)
 
 
+class CheckInRequest(BaseModel):
+    """Post-exercise self-report. Every question is optional; nothing is inferred when skipped."""
+    pain_during: bool | None = None
+    pain_after: int | None = Field(default=None, ge=0, le=10)
+    pain_locations: list[Literal['knee','hip','back','ankle','other']] = Field(default_factory=list, max_length=5)
+    difficulty: Literal['easy','moderate','hard'] | None = None
+    knee_unstable: bool | None = None
+    swelling: bool | None = None
+    notes: str = Field(default='', max_length=1000)
+
+
 class FeedbackRequest(BaseModel):
     text: str = Field(max_length=5000)
+
+
+class AiRequest(BaseModel):
+    consent: bool = False
+    lang: Literal['en','ar'] = 'en'
+    question: str = Field(default='', max_length=500)
+
+
+class CheckRequest(BaseModel):
+    consent: bool = False
 
 
 class TrackingRequest(BaseModel):
@@ -91,6 +158,22 @@ def create_app():
     configure_ffmpeg()
     library=prepare_library()
     app=FastAPI(title='Wathba',docs_url=None,redoc_url=None)
+    # Cross-origin isolation lets ONNX Runtime Web use multi-threaded WebAssembly
+    # (SharedArrayBuffer). All app resources are same-origin. Remote-storage mode
+    # redirects media to another origin, so isolation stays off there.
+    isolate=os.getenv('WATHBA_CROSS_ORIGIN_ISOLATION','0' if remote.enabled() else '1')=='1'
+
+    @app.middleware('http')
+    async def performance_headers(request:Request,call_next):
+        response=await call_next(request)
+        if isolate:
+            response.headers.setdefault('Cross-Origin-Opener-Policy','same-origin')
+            response.headers.setdefault('Cross-Origin-Embedder-Policy','require-corp')
+            response.headers.setdefault('Cross-Origin-Resource-Policy','same-origin')
+        if request.url.path.startswith('/vendor/') and response.status_code==200:
+            # Runtime and weights are pinned by SHA256 (assets/vendor/manifest.json); cache for a week.
+            response.headers['Cache-Control']='public, max-age=604800'
+        return response
 
     @app.get('/')
     def index():return FileResponse(BASE/'web/index.html')
@@ -100,7 +183,8 @@ def create_app():
         if exercise not in ("squat", "jump"):raise HTTPException(400,"Choose Squats or Jump.")
         ref=reference_id(exercise)
         m=storage.load_reference(ref) if ref else None
-        teacher=Path(storage.load(ref)['source_video']) if ref else library/f'therapist-{exercise}.mp4'
+        legacy=None if ref else legacy_reference_source(exercise)
+        teacher=Path(storage.load(ref)['source_video']) if ref else legacy or library/f'therapist-{exercise}.mp4'
         poster=teacher.parent/f'therapist-{exercise}.jpg'
         legacy_poster=teacher.parent/'therapist.jpg'
         if remote.enabled() and not remote.exists(poster) and remote.exists(legacy_poster):poster=legacy_poster
@@ -108,7 +192,12 @@ def create_app():
         if teacher.exists() and not poster.exists():
             cap=cv2.VideoCapture(str(teacher));cap.set(cv2.CAP_PROP_POS_MSEC,1500);ok,frame=cap.read();cap.release()
             if ok:cv2.imwrite(str(poster),frame)
-        return {'exercise':'Squat' if exercise=='squat' else 'Jump','exerciseId':exercise,'comparisonAvailable':bool(m),'side':'Left','view':'Front','target':storage.load_plan().target_repetitions,'model':'Google MediaPipe Pose Landmarker Full',
+        return {'exercise':'Squat' if exercise=='squat' else 'Jump','exerciseId':exercise,'comparisonAvailable':bool(m),'side':'Left','view':'Front','target':storage.load_plan().target_repetitions,'model':'YOLOv8n-pose + MoveNet SinglePose Lightning (browser)',
+                'referenceAsset':'legacy-reference' if legacy else 'therapist','referenceNeedsRefit':bool(legacy),
+                'pose':{'pipeline':PIPELINE,'maxHz':env_number('WATHBA_POSE_MAX_HZ',15,2,30),'reacquireSeconds':env_number('WATHBA_POSE_REACQUIRE_SECONDS',1,.25,10),
+                        'models':{k:{f:v[f] for f in ('label','role','runtime','license')} for k,v in MODELS.items()},
+                        'vitpose':dict(zip(('available','reason'),vitpose_service.available()))},
+                'ai':ai_coach.status(),
                 'referenceId':ref,'referenceModel':m,'referenceUrl':media_url(teacher) if teacher.exists() or (remote.enabled() and remote.exists(teacher)) else None,
                 'sampleUrl':media_url(library/f'patient-{exercise}.mp4') if (library/f'patient-{exercise}.mp4').exists() or (remote.enabled() and remote.exists(library/f'patient-{exercise}.mp4')) else None,
                 'maxUploadMb':int(os.getenv('WATHBA_MAX_UPLOAD_MB','300')),'maxRecordingSeconds':int(os.getenv('WATHBA_MAX_RECORDING_SECONDS','180')),'cameraBitrate':int(os.getenv('WATHBA_CAMERA_BITRATE','2500000')),
@@ -146,6 +235,10 @@ def create_app():
         if request.asset in ('therapist','patient'):
             source=library/f'{request.asset}-{request.exercise}.mp4'
             if request.reference != (request.asset=='therapist'):raise HTTPException(400,'Reference and patient sources must be separate.')
+        elif request.asset=='legacy-reference':
+            # Re-fit a reference prepared by the removed MediaPipe engine from its own source video.
+            source=legacy_reference_source(request.exercise)
+            if not request.reference or source is None:raise HTTPException(400,'No earlier therapist reference needs to be prepared again.')
         else:
             if len(request.asset)!=32 or any(c not in '0123456789abcdef' for c in request.asset):raise HTTPException(400,'Invalid recording.')
             source=storage.root()/'uploads'/request.asset/'source.mp4'
@@ -180,6 +273,14 @@ def create_app():
         storage.save_plan(plan)
         return {'target_repetitions':plan.target_repetitions}
 
+    @app.post('/api/session/{session_id}/check-in')
+    def update_check_in(session_id:str,request: CheckInRequest):
+        try:
+            s=storage.check_in(session_id,{**request.model_dump(),'pain_locations':list(dict.fromkeys(request.pain_locations)),'notes':request.notes.strip()})
+            remote.persist_session(session_id)
+            return public_session(s)
+        except (OSError,ValueError):raise HTTPException(404,'Session not found.')
+
     @app.post('/api/session/{session_id}/feedback')
     def update_feedback(session_id:str,request: FeedbackRequest):
         try:
@@ -188,15 +289,75 @@ def create_app():
             return public_session(s)
         except (OSError,ValueError):raise HTTPException(404,'Session not found.')
 
+    @app.post('/api/session/{session_id}/vitpose-check')
+    def vitpose_check(session_id:str,request:CheckRequest):
+        """Optional server-side ViTPose check of selected frames of an already uploaded recording."""
+        if not request.consent:raise HTTPException(400,'Confirm that this recording may be re-analysed on the Wathba server.')
+        ok,reason=vitpose_service.available()
+        if not ok:raise HTTPException(503,reason)
+        try:s=storage.load(session_id)
+        except (OSError,ValueError):raise HTTPException(404,'Session not found.')
+        if s.get('pose_engine')!=PIPELINE:raise HTTPException(400,'This session was recorded with an earlier pose engine and has no tracked person boxes.')
+        if remote.enabled():remote.ensure(s['source_video'])
+        try:result=vitpose_service.check_session(s)
+        except vitpose_service.Unavailable as exc:raise HTTPException(503,str(exc)) from exc
+        except ValueError as exc:raise HTTPException(400,str(exc)) from exc
+        with storage.LOCK:
+            latest=storage.load(session_id)
+            latest.setdefault('model_checks',{})['vitpose']=result
+            storage.save(latest)
+        remote.persist_session(session_id)
+        return result
+
+    def run_ai(session_id, request, kind, work):
+        """Shared consent, availability and storage handling for the Qwen3 features."""
+        if not request.consent:raise HTTPException(400,'Confirm that this session may be processed by the Qwen3 model on the Wathba server.')
+        ok,reason=llm.available('vision' if kind=='vision' else 'text')
+        if not ok:raise HTTPException(503,reason)
+        try:s=storage.load(session_id)
+        except (OSError,ValueError):raise HTTPException(404,'Session not found.')
+        if kind=='vision' and remote.enabled():remote.ensure(s['source_video'])
+        try:result=work(s)
+        except llm.Unavailable as exc:raise HTTPException(503,str(exc)) from exc
+        except ValueError as exc:raise HTTPException(400,str(exc)) from exc
+        with storage.LOCK:
+            latest=storage.load(session_id);store=latest.setdefault('ai',{})
+            if kind=='summary':store.setdefault('summary',{})[request.lang]=result
+            elif kind=='question':store['questions']=[*store.get('questions',[]),result][-20:]
+            else:store['vision']=result
+            storage.save(latest)
+        remote.persist_session(session_id)
+        return result
+
+    @app.post('/api/session/{session_id}/ai/summary')
+    def ai_summary(session_id:str,request:AiRequest):
+        return run_ai(session_id,request,'summary',lambda s:ai_coach.summary(s,request.lang))
+
+    @app.post('/api/session/{session_id}/ai/ask')
+    def ai_ask(session_id:str,request:AiRequest):
+        return run_ai(session_id,request,'question',lambda s:ai_coach.answer(s,request.question,request.lang))
+
+    @app.post('/api/session/{session_id}/ai/vision')
+    def ai_vision(session_id:str,request:AiRequest):
+        return run_ai(session_id,request,'vision',lambda s:ai_coach.review_frames(s,request.lang))
+
     @app.get('/api/history')
     def history():
-        return [{'id':s['id'],'repetitions':s['repetitions'],'score':s.get('match_score',{}).get('value'),'created':s['created_at'],'exercise':s['exercise'],'coverage':s['coverage'],'duration':s['duration']}
-                for s in storage.sessions() if s.get('pose_engine')=='mediapipe-pose-landmarker-full' and s.get('height_normalisation')=='static_torso_v1' and s.get('kind')!='reference' and not s.get('internal_validation')][:100]
+        return [{'id':s['id'],'repetitions':s['repetitions'],'score':s.get('match_score',{}).get('value'),'created':s['created_at'],'exercise':s['exercise'],'coverage':s['coverage'],'duration':s['duration'],
+                 'pain':(s.get('patient_check_in') or {}).get('pain_after'),'attention':(s.get('patient_check_in') or {}).get('attention',[])}
+                for s in storage.sessions() if s.get('pose_engine') in SESSION_ENGINES and s.get('height_normalisation')=='static_torso_v1' and s.get('kind')!='reference' and not s.get('internal_validation')][:100]
+
+    @app.get('/api/training-summary')
+    def training_summary():
+        """Days, weeks and months with at least one recorded patient session (all sessions, not only the last 100)."""
+        from .program import training_summary as summarise
+        return summarise([s for s in storage.sessions() if s.get('pose_engine') in SESSION_ENGINES
+                          and s.get('kind')!='reference' and not s.get('internal_validation')])
 
     @app.get('/api/demo-program')
     def demo_program():
         from .program import demo_program as build_program
-        sessions=[s for s in storage.sessions() if s.get('pose_engine')=='mediapipe-pose-landmarker-full'
+        sessions=[s for s in storage.sessions() if s.get('pose_engine') in SESSION_ENGINES
                   and s.get('kind')!='reference' and not s.get('internal_validation')]
         return build_program(sessions, storage.load_plan().target_repetitions)
 

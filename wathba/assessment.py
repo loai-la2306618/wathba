@@ -13,6 +13,10 @@ from scipy.ndimage import gaussian_filter1d
 from scipy.signal import find_peaks
 
 from .motion import interior_angle
+from .pose_schema import INDEX as J
+
+# Shoulders, hips and ankles: needed by frontal pelvic descent and jump lift.
+BODY_HEIGHT_JOINTS = ("left_shoulder", "right_shoulder", "left_hip", "right_hip", "left_ankle", "right_ankle")
 
 
 @dataclass(frozen=True)
@@ -36,20 +40,27 @@ FEATURES = {
 }
 
 
-def pose_features(points, scores, side, threshold=.45):
-    """Per-feature visibility. One unreliable landmark cannot validate a feature."""
+def pose_features(points, scores, side, threshold=.45, reliable=None):
+    """2D image-plane features from named COCO-17 joints.
+
+    `reliable` is a per-joint mask from the producing model's own threshold. When
+    absent (older server-side records), `scores >= threshold` is used. A feature
+    is None unless every joint it needs is reliable; nothing is substituted.
+    """
     points, scores = np.asarray(points, float), np.asarray(scores, float)
     if points.shape != (17, 2) or scores.shape != (17,):
         raise ValueError("Expected 17 two-dimensional landmarks and scores.")
-    shoulder, hip, knee, ankle = (5, 11, 13, 15) if side == "Left" else (6, 12, 14, 16)
+    ok = np.asarray(reliable, bool) if reliable is not None else (np.isfinite(scores) & (scores >= threshold))
+    s = "left" if side == "Left" else "right"
+    shoulder, hip, knee, ankle = (J[f"{s}_shoulder"], J[f"{s}_hip"], J[f"{s}_knee"], J[f"{s}_ankle"])
     features, confidence = {}, {}
 
     def add(name, indices, fn):
-        s = scores[list(indices)]
-        visible = np.isfinite(s).all() and np.isfinite(points[list(indices)]).all()
-        conf = float(np.min(s)) if visible else 0.0
-        confidence[name] = max(0.0, min(1.0, conf))
-        value = fn() if visible and conf >= threshold else None
+        indices = list(indices)
+        visible = bool(ok[indices].all()) and bool(np.isfinite(points[indices]).all())
+        # Raw model score of the weakest joint, for provenance only; reliability is the gate.
+        confidence[name] = round(max(0.0, min(1.0, float(np.min(scores[indices])))), 4) if np.isfinite(scores[indices]).all() else 0.0
+        value = fn() if visible else None
         features[name] = round(float(value), 4) if value is not None and math.isfinite(value) else None
 
     add("knee_angle", (hip, knee, ankle), lambda: interior_angle(points[hip], points[knee], points[ankle]))
@@ -58,10 +69,10 @@ def pose_features(points, scores, side, threshold=.45):
     add("leg_elevation", (hip, ankle), lambda: math.degrees(math.atan2(abs(points[ankle, 0] - points[hip, 0]), points[ankle, 1] - points[hip, 1])))
 
     def height():
-        torso = np.linalg.norm((points[5] + points[6] - points[11] - points[12]) / 2)
-        return ((points[15, 1] + points[16, 1] - points[11, 1] - points[12, 1]) / 2) / torso if torso > 5 else None
+        torso = np.linalg.norm((points[J["left_shoulder"]] + points[J["right_shoulder"]] - points[J["left_hip"]] - points[J["right_hip"]]) / 2)
+        return ((points[J["left_ankle"], 1] + points[J["right_ankle"], 1] - points[J["left_hip"], 1] - points[J["right_hip"], 1]) / 2) / torso if torso > 5 else None
 
-    add("hip_height", (5, 6, 11, 12, 15, 16), height)
+    add("hip_height", [J[n] for n in BODY_HEIGHT_JOINTS], height)
 
     def offset():
         axis = points[ankle] - points[hip]
@@ -73,6 +84,20 @@ def pose_features(points, scores, side, threshold=.45):
 
     add("knee_offset", (hip, knee, ankle), offset)
     return features, confidence
+
+
+def joints_reliable(sample, names):
+    """Per-joint reliability from the producing model; legacy records use score >= .45."""
+    mask, scores = sample.get("reliable"), sample.get("scores")
+    if sample.get("points") is None:
+        return False
+    if mask is not None:
+        return all(mask[J[n]] for n in names)
+    return scores is not None and min(scores[J[n]] for n in names) >= .45
+
+
+def _xy(sample, name):
+    return np.asarray(sample["points"][J[name]], float)
 
 
 def value(sample, name):
@@ -89,15 +114,10 @@ def normalise_frontal_height(samples):
     """
     measurements = []
     for i, s in enumerate(samples):
-        p, scores = s.get('points'), s.get('scores')
-        if p is None or scores is None:
+        if not joints_reliable(s, BODY_HEIGHT_JOINTS):
             continue
-        indices = [5, 6, 11, 12, 15, 16]
-        if min(scores[j] for j in indices) < .45:
-            continue
-        p = np.asarray(p, float)
-        torso = float(np.linalg.norm((p[5]+p[6]-p[11]-p[12])/2))
-        height = float((p[15,1]+p[16,1]-p[11,1]-p[12,1])/2)
+        torso = float(np.linalg.norm((_xy(s, "left_shoulder") + _xy(s, "right_shoulder") - _xy(s, "left_hip") - _xy(s, "right_hip")) / 2))
+        height = float((_xy(s, "left_ankle")[1] + _xy(s, "right_ankle")[1] - _xy(s, "left_hip")[1] - _xy(s, "right_hip")[1]) / 2)
         if torso > 5 and math.isfinite(height):
             measurements.append((i, torso, height))
     if not measurements:
@@ -114,26 +134,33 @@ def feature_confidence(sample, name):
 
 
 def normalise_jump_height(samples):
-    """Fixed-camera, both-foot vertical displacement; not force or jump safety."""
-    reliable = [s for s in samples if s.get('points') is not None and
-                min(s['scores'][i] for i in (5, 6, 11, 12, 15, 16)) >= .45]
+    """Fixed-camera, both-foot (ankle) vertical displacement; not force or jump safety."""
+    reliable = [s for s in samples if joints_reliable(s, BODY_HEIGHT_JOINTS)]
     if not reliable:
         return samples
     initial = reliable[:max(1, min(6, len(reliable)))]
-    floor = float(np.median([max(s['points'][15][1], s['points'][16][1]) for s in initial]))
-    scale = float(np.quantile([np.linalg.norm((np.asarray(s['points'][5])+s['points'][6]-np.asarray(s['points'][11])-s['points'][12])/2) for s in reliable], .75))
+    floor = float(np.median([max(_xy(s, "left_ankle")[1], _xy(s, "right_ankle")[1]) for s in initial]))
+    scale = float(np.quantile([np.linalg.norm((_xy(s, "left_shoulder") + _xy(s, "right_shoulder") - _xy(s, "left_hip") - _xy(s, "right_hip")) / 2) for s in reliable], .75))
     if scale <= 5:
         return samples
     for s in samples:
-        conf = min(s['scores'][i] for i in (5,6,11,12,15,16)) if s.get('scores') else 0
-        s['feature_confidence']['foot_lift'] = conf
-        s['features']['foot_lift'] = round((floor-max(s['points'][15][1],s['points'][16][1]))/scale, 4) if conf >= .45 else None
+        ok = joints_reliable(s, BODY_HEIGHT_JOINTS)
+        scores = s.get('scores')
+        s['feature_confidence']['foot_lift'] = min(scores[J[n]] for n in BODY_HEIGHT_JOINTS) if scores else 0
+        s.setdefault('feature_reliable', {})['foot_lift'] = ok
+        s['features']['foot_lift'] = round((floor-max(_xy(s, "left_ankle")[1], _xy(s, "right_ankle")[1]))/scale, 4) if ok else None
     return samples
 
 
 def valid(sample, name):
     v = value(sample, name)
-    return v is not None and math.isfinite(v) and feature_confidence(sample, name) >= .45
+    if v is None or not math.isfinite(v):
+        return False
+    gate = sample.get("feature_reliable")
+    if gate is not None and name in gate:
+        return bool(gate[name])
+    # Records without per-model reliability (older server-side extraction).
+    return feature_confidence(sample, name) >= .45
 
 
 def runs(samples, name):
@@ -385,7 +412,7 @@ def assess(samples, plan, reference=None, illustrative=False):
             "median_cycle_seconds": round(float(np.median([c["duration"] for c in cycles])), 3) if cycles else None,
             "assessment_status": ("Illustrative reference comparison" if reference["synthetic"] else "Reference comparison") if reference else "Measurements only — no comparison reference selected",
             "reference_model": {k: reference[k] for k in ("reference_session_id", "exercise", "view", "training_cycles", "approved_by_user", "method", "synthetic")} if reference else None,
-            "limitations": ["2D camera measurements are approximate and depend on camera placement.",
+            "limitations": ["2D image-plane measurements are approximate and depend on camera placement; no depth is estimated.",
                             "A difference from a reference is not, by itself, proof of incorrect or unsafe exercise."] +
                            (["The selected reference is an illustrated research motion, not a patient-specific clinical standard."] if reference and reference["synthetic"] else []) +
                            ([] if reference else ["No reference was selected; exercise correctness and corrective movement cues were not inferred."]) +

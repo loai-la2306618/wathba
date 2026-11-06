@@ -1,12 +1,13 @@
-"""Separate clinician review workspace for MediaPipe sessions."""
+"""Separate clinician review workspace for browser-tracked sessions (current and legacy engines)."""
 import gradio as gr
 from . import storage
+from .pose_schema import LEGACY_MEDIAPIPE_ENGINE, PIPELINE
 from .ui import load_session,select_flag,save_review,send_feedback,export_bundle
 
 
 def choices():
     return [(f"{s['label']} · {s['created_at'][11:16]} UTC · {s['id'][:6]}",s['id']) for s in storage.sessions()
-            if s.get('pose_engine')=='mediapipe-pose-landmarker-full' and s.get('kind')!='reference' and not s.get('internal_validation')]
+            if s.get('pose_engine') in (PIPELINE, LEGACY_MEDIAPIPE_ENGINE) and s.get('kind')!='reference' and not s.get('internal_validation')]
 
 
 def build_review_app():

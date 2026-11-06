@@ -1,0 +1,12 @@
+{
+  "name": "wathba-pose-tests",
+  "private": true,
+  "type": "module",
+  "description": "Development-only: Node tests for the browser pose adapters and engine. The app itself needs no npm build.",
+  "scripts": {
+    "test": "node --test \"tests/js/*.test.mjs\""
+  },
+  "devDependencies": {
+    "onnxruntime-node": "1.30.0"
+  }
+}

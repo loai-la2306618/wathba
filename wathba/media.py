@@ -9,7 +9,11 @@ import cv2
 import imageio_ffmpeg
 import numpy as np
 
-EDGES = [(5, 6), (5, 7), (7, 9), (6, 8), (8, 10), (5, 11), (6, 12), (11, 12), (11, 13), (13, 15), (12, 14), (14, 16)]
+from .pose_schema import EDGES as NAMED_EDGES, INDEX as J
+
+EDGES = [(J[a], J[b]) for a, b in NAMED_EDGES]
+PART_JOINTS = {'left': {J['left_hip'], J['left_knee'], J['left_ankle']}, 'right': {J['right_hip'], J['right_knee'], J['right_ankle']},
+               'trunk': {J['left_shoulder'], J['right_shoulder'], J['left_hip'], J['right_hip']}}
 
 
 def configure_ffmpeg():
@@ -61,18 +65,20 @@ def open_video(path):
     return cap, fps, duration
 
 
-def draw_pose(frame, points, scores, angle, t, synthetic=False, caption=None, review=False, parts=None):
+def draw_pose(frame, points, scores, angle, t, synthetic=False, caption=None, review=False, parts=None, reliable=None):
+    """Draw COCO-17 joints. `reliable` (per-model threshold mask) takes precedence over raw scores."""
     frame = frame.copy()
     if points is not None:
+        ok = list(reliable) if reliable is not None else [s >= 0.45 for s in scores]
         for a, b in EDGES:
-            if scores[a] >= 0.45 and scores[b] >= 0.45:
+            if ok[a] and ok[b]:
                 colour = (58, 166, 224) if review else (193, 179, 20)
                 if parts is not None:
-                    part = 'left' if a in (11,13,15) and b in (11,13,15) else 'right' if a in (12,14,16) and b in (12,14,16) else 'trunk' if a in (5,6,11,12) and b in (5,6,11,12) else None
+                    part = next((name for name, joints in PART_JOINTS.items() if a in joints and b in joints), None)
                     colour = {'green':(176,245,137),'yellow':(107,214,255),'red':(120,109,255),'grey':(175,165,157)}[parts.get(part,'grey')]
                 cv2.line(frame, tuple(map(int, points[a])), tuple(map(int, points[b])), colour, 3, cv2.LINE_AA)
         for i, point in enumerate(points):
-            if scores[i] >= 0.45:
+            if ok[i]:
                 cv2.circle(frame, tuple(map(int, point)), 4, (237, 249, 255), -1, cv2.LINE_AA)
     caption = caption or ("Tracking uncertain" if angle is None else f"2D interior angle: {angle:.0f} deg")
     if review:

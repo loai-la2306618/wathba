@@ -1,3 +1,5 @@
+> **Historical record.** This page describes the earlier MediaPipe preview deployment. The current source uses YOLOv8n-pose + MoveNet in the browser and an optional backend ViTPose check (see README). The preview has not been redeployed with it.
+
 # Wathba shared preview
 
 Production preview: https://wathba-demo.vercel.app
