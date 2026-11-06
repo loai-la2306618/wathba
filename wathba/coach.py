@@ -161,7 +161,7 @@ ARABIC_LETTER = '؀-ۿ'
 
 def mentions_number(text, value, lang):
     """The value as digits, or (for 0-20 in English, 0-10 in Arabic) as a whole number word."""
-    if re.search(rf'(?<![\d.]){value}(?![\d.])', text.translate(ARABIC_DIGITS)):
+    if re.search(rf'(?<![\d.]){value}(?!\d|\.\d)', text.translate(ARABIC_DIGITS)):  # A full stop may end the sentence.
         return True
     words = NUMBER_WORDS[lang]
     if not isinstance(value, int) or not 0 <= value < len(words):

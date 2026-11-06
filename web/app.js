@@ -331,7 +331,7 @@ function showWorkoutEvaluation(session=state.session,review=false){
  page('workout-evaluation');
 }
 // --------------------------------------------------------------- AI coach (Qwen3)
-const aiSummaryHtml=r=>r.checked?`<p class="ai-text" data-no-i18n dir="auto">${esc(r.text)}</p><small class="ai-meta">${esc(r.stats?.repo||'Qwen3')} · ${r.stats?.seconds??'—'} s</small>`
+const aiSummaryHtml=r=>r.fixed?`<p class="ai-text" data-no-i18n dir="auto">${esc(r.text)}</p><small class="ai-meta">Written by the app from your measured results, not by the AI model.</small>`:r.checked?`<p class="ai-text" data-no-i18n dir="auto">${esc(r.text)}</p><small class="ai-meta">${esc(r.stats?.repo||'Qwen3')} · ${r.stats?.seconds??'—'} s</small>`
  :`<p class="subtle">The model's summary did not pass the automatic checks, so it is not shown.</p>`;
 const aiAnswerHtml=q=>`<div class="ai-q"><b data-no-i18n dir="auto">${esc(q.question)}</b><p data-no-i18n dir="auto">${esc(q.text)}</p></div>`;
 function aiSection(s){

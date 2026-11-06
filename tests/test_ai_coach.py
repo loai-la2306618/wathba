@@ -61,6 +61,12 @@ def test_arabic_number_words_match_their_values(text, value, expected):
     assert coach.mentions_number(text, value, 'ar') is expected
 
 
+def test_number_at_the_end_of_a_sentence_counts_but_a_decimal_does_not():
+    assert coach.mentions_number('عدد تكراراتك المكتملة: 5.', 5, 'ar')
+    assert coach.mentions_number('You did 5.', 5, 'en')
+    assert not coach.mentions_number('It took 5.5 seconds.', 5, 'en')
+
+
 LOW_PAIN = {'repetitions_completed': 3, 'tracking_coverage_percent': 90, 'needs_attention': False,
             'patient_check_in': {'pain_during_exercise': False, 'pain_after_exercise_0_to_10': 2}}
 
@@ -171,7 +177,8 @@ def test_unchecked_summary_is_withheld_and_question_falls_back(tmp_path, monkeyp
     monkeypatch.setattr(llm, 'available', lambda kind='text': (True, ''))
     fake_llm(monkeypatch, ['You did 9 reps and your ACL is healed.'])
     r = client.post(f'/api/session/{sid}/ai/summary', json={'consent': True, 'lang': 'en'}).json()
-    assert r['checked'] is False and r['text'] is None and r['issues']
+    assert r['checked'] is False and r['fixed'] and r['issues']
+    assert r['text'] == ai.fixed_summary(coach.session_facts(storage.load(sid)), 'en')
     q = client.post(f'/api/session/{sid}/ai/ask', json={'consent': True, 'lang': 'ar', 'question': 'هل التأم الرباط؟'}).json()
     assert q['fallback'] and q['text'] == ai.FALLBACK_ANSWER['ar']
     assert storage.load(sid)['ai']['questions'][0]['question'] == 'هل التأم الرباط؟'
@@ -186,8 +193,27 @@ def test_summary_denying_reported_pain_is_withheld(tmp_path, monkeypatch, lang, 
     monkeypatch.setattr(llm, 'available', lambda kind='text': (True, ''))
     calls = fake_llm(monkeypatch, [reply])
     r = client.post(f'/api/session/{sid}/ai/summary', json={'consent': True, 'lang': lang}).json()
-    assert r['checked'] is False and r['text'] is None and len(calls) == ai.ATTEMPTS
+    assert r['checked'] is False and r['fixed'] and len(calls) == ai.ATTEMPTS
     assert 'contradicts patient answer (pain reported)' in r['issues']
+    assert reply not in r['text']
+
+
+def fixed_facts(reps, match, pain, unstable, swelling):
+    answers = None if pain is None else {'pain_during': bool(pain) and reps % 2 == 0, 'pain_after': pain, 'pain_locations': [], 'difficulty': 'moderate',
+                                         'knee_unstable': unstable, 'swelling': swelling, 'notes': '',
+                                         'attention': [k for k, v in (('pain', (pain or 0) >= 5), ('knee', unstable), ('swelling', swelling)) if v]}
+    return coach.session_facts({'exercise': 'Squat', 'plan': {'side': 'Left', 'target_repetitions': 5}, 'repetitions': reps, 'duration': 30, 'coverage': 91.4,
+                                'match_score': {'value': match}, 'cycles': [{'duration': 1.7}] * reps, 'flags': [], 'patient_check_in': answers, 'feedback': ''})
+
+
+@pytest.mark.parametrize('lang', ['en', 'ar'])
+@pytest.mark.parametrize('reps', [0, 1, 2, 3, 5, 11, 20])
+@pytest.mark.parametrize('match', [None, 83])
+@pytest.mark.parametrize('pain,unstable,swelling', [(None, False, False), (0, False, False), (1, False, False), (2, False, False), (4, True, False), (6, False, True), (10, True, True)])
+def test_fixed_summary_always_passes_the_safety_checks(lang, reps, match, pain, unstable, swelling):
+    facts = fixed_facts(reps, match, pain, unstable, swelling)
+    result = coach.check(ai.fixed_summary(facts, lang), facts, lang, 'feedback')
+    assert result['ok'], result['issues']
 
 
 @pytest.mark.parametrize('lang,question,reply', [

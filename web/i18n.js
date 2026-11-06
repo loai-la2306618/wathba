@@ -244,6 +244,7 @@ const AR = {
   'Write my summary': 'اكتب ملخّصي', 'Write the summary again': 'أعد كتابة الملخّص', 'Ask about this session': 'اسأل عن هذه الجلسة',
   'For example: how many repetitions did I do?': 'مثلًا: كم تكرارًا أدّيت؟', 'Your question': 'سؤالك', 'Ask': 'اسأل', 'Thinking…': 'جارٍ التفكير…',
   'Type a question first.': 'اكتب سؤالًا أولًا.', 'The AI coach is not available on this server.': 'المساعد الذكي غير متاح على هذا الخادم.',
+  'Written by the app from your measured results, not by the AI model.': 'كتبه التطبيق من نتائجك المقاسة، وليس نموذج الذكاء الاصطناعي.',
   "The model's summary did not pass the automatic checks, so it is not shown.": 'لم يجتز ملخّص النموذج الفحوصات التلقائية، لذا لا يُعرض.',
   'Confirm that this session may be processed by the Qwen3 model on the Wathba server.': 'أكّد السماح لنموذج Qwen3 على خادم وثبة بمعالجة هذه الجلسة.',
   'Writing your summary': 'جارٍ كتابة ملخّصك', 'The Qwen3 model is reading your session on the Wathba server. The first run loads the model.': 'يقرأ نموذج Qwen3 جلستك على خادم وثبة. يُحمَّل النموذج في المرة الأولى.',
