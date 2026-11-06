@@ -88,6 +88,23 @@ def test_accurate_pain_statements_are_allowed(text, lang):
     assert result['scores']['consistent_with_answers'], result['issues']
 
 
+@pytest.mark.parametrize('text,lang', [
+    ('لم يلاحظ ألم أثناء أو بعد التمرين، حيث بلغ مستوى الألم 2 من 10.', 'ar'),
+    ('أكملت 3 تكرارات دون ألم بعد التمرين وأثناءه.', 'ar'),
+    ('You had no pain during or after the exercise, with a score of 2 out of 10.', 'en'),
+])
+def test_denying_pain_after_the_exercise_is_caught_even_when_during_is_mentioned(text, lang):
+    assert 'contradicts patient answer (pain reported)' in coach.check(text, LOW_PAIN, lang, 'feedback')['issues']
+
+
+@pytest.mark.parametrize('text,lang', [
+    ('You completed 3 repetitions and reported mild pain in the knee after the exercise.', 'en'),
+    ('أكملت 3 تكرارات وسجّلت ألمًا خفيفًا في الركبة.', 'ar'),
+])
+def test_summary_must_give_the_pain_score(text, lang):
+    assert 'reported pain score missing' in coach.check(text, LOW_PAIN, lang, 'feedback')['issues']
+
+
 def test_no_pain_is_fine_when_the_patient_reported_none():
     facts = {**LOW_PAIN, 'patient_check_in': {'pain_during_exercise': False, 'pain_after_exercise_0_to_10': 0}}
     assert coach.check('You completed 3 repetitions with no pain.', facts, 'en', 'feedback')['scores']['consistent_with_answers']

@@ -123,8 +123,10 @@ TASHKEEL = re.compile('[\u064B-\u0652\u0640]')
 
 # Summaries that deny pain the patient reported. Run on text without diacritics.
 NO_PAIN = {'en': r"\b(?:no|without|zero|free of|free from)\s+(?:any\s+)?pain\b|\bpain[- ]free\b|\b(?:not|never|didn't|did not|wasn't|weren't)\b[^.!?]{0,30}\bpain\b",
-           'ar': r'(?<![؀-ۿ])[وف]?(?:بدون|دون|بلا|من غير|عدم|لا يوجد|لا توجد|لا تشعر|لم تشعر|لم يشعر|لم تسجل|لم يسجل|لم تذكر|لم يذكر|لم يظهر|لم تظهر|لم يكن|لم تعان|لم يعان|خال|خالية)(?![؀-ۿ])[^.؟!]{0,30}ألم'}
+           'ar': r'(?<![؀-ۿ])[وف]?(?:بدون|دون|بلا|من غير|عدم|لا يوجد|لا توجد|لا تشعر|لم تشعر|لم يشعر|لم تسجل|لم يسجل|لم تذكر|لم يذكر|لم يظهر|لم تظهر|لم يكن|لم تعان|لم يعان|لم يلاحظ|لم تلاحظ|لم يلحظ|لم يرصد|لم ترصد|لم يبلغ|لم تبلغ|خال|خالية)(?![؀-ۿ])[^.؟!]{0,30}ألم'}
 DURING = {'en': r'\b(?:during|while)\b', 'ar': r'أثناء|خلال'}
+AFTER = {'en': r'\b(?:after|afterwards|afterward)\b', 'ar': r'بعد'}
+CLAUSE = re.compile(r'[.!?؟؛;،,\n]+|\bbut\b|لكن', re.I)
 # Questions only the physiotherapist can answer, whatever the session facts say.
 CLINICAL_QUESTION = {
     'en': r'\b(?:heal(?:ed|ing)?|recover(?:ed|y|ing)?|return|go back|get back|back to|football|soccer|sports?|play|run|running|weights?|load|heavier|more (?:reps|repetitions)|new exercises?|safe)\b',
@@ -320,8 +322,9 @@ def check(text, facts, lang, task, expect=None):
                     issues.append(f'contradicts patient answer ({key} = no)')
                     break
     if (ci.get('pain_after_exercise_0_to_10') or 0) > 0:
-        for sentence in sentences(text):
-            if re.search(NO_PAIN[lang], sentence, re.I) and not re.search(DURING[lang], sentence, re.I):
+        for clause in CLAUSE.split(text):
+            only_during = re.search(DURING[lang], clause, re.I) and not re.search(AFTER[lang], clause, re.I)
+            if re.search(NO_PAIN[lang], clause, re.I) and not only_during:
                 scores['consistent_with_answers'] = False
                 issues.append('contradicts patient answer (pain reported)')
                 break
@@ -344,6 +347,9 @@ def check(text, facts, lang, task, expect=None):
             scores['mentions_pain'] = bool(re.search(r'pain|ألم|الألم', text, re.I))
             if not scores['mentions_pain']:
                 issues.append('reported pain not mentioned')
+            elif pain > 0 and not mentions_number(text, pain, lang):
+                scores['mentions_pain'] = False
+                issues.append('reported pain score missing')
     for value in expect.get('must_include_numbers', []):
         key = f'answers_{value}'
         scores[key] = mentions_number(text, value, lang)
