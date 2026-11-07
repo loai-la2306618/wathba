@@ -29,6 +29,7 @@ DEFAULT_VISION = os.getenv('WATHBA_QWEN_VISION_MODEL', 'qwen3-vl-4b')
 # Qwen3 recommended sampling for non-thinking use; a fixed seed makes runs repeatable.
 SAMPLING = {'do_sample': True, 'temperature': .7, 'top_p': .8, 'top_k': 20}
 BACKEND = os.getenv('WATHBA_QWEN_BACKEND', 'auto')
+# The only Inference Provider that serves Qwen3-4B. Fixed here, because 'auto' depends on each account's provider settings.
 PROVIDER = os.getenv('WATHBA_QWEN_PROVIDER', 'featherless-ai')
 LOCK = threading.RLock()
 _state = {'key': None, 'bundle': None, 'errors': {}, 'load_seconds': {}}
@@ -169,7 +170,7 @@ def _generate_hosted(messages, key, max_new_tokens, seed):
     seconds = time.perf_counter() - started
     usage = getattr(out, 'usage', None)
     new_tokens = getattr(usage, 'completion_tokens', None)
-    stats = {'model': key, 'repo': MODELS[key]['repo'], 'backend': 'inference-providers', 'device': f'Hugging Face Inference Providers ({PROVIDER})',
+    stats = {'model': key, 'repo': MODELS[key]['repo'], 'backend': 'inference-providers', 'device': 'Hugging Face Inference Providers',
              'precision': None, 'prompt_tokens': getattr(usage, 'prompt_tokens', None), 'new_tokens': new_tokens,
              'seconds': round(seconds, 3), 'tokens_per_second': round(new_tokens / seconds, 1) if new_tokens and seconds else None,
              'peak_gpu_mb': None, 'load_seconds': None}
