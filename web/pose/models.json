@@ -24,8 +24,8 @@
   },
   "models": {
     "yolov8n-pose": {
-      "repository": "Xenova/yolov8n-pose",
-      "revision": "da4224085e2f6ce4c9ff9b670e28765194619db2",
+      "repository": "JustViping/team-qh-005-wathba-yolov8n-pose",
+      "revision": "0f109c03e89223da0b9b070672cdde933ddad927",
       "label": "YOLOv8n-pose",
       "role": "person detection, initial pose and periodic reacquisition",
       "files": {"detection": "model_quantized.onnx", "keypoints": "model.onnx"},

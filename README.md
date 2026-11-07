@@ -27,7 +27,7 @@ The patient app tracks pose in the browser with **ONNX Runtime Web**, using thre
 
 | Model | Where | Role |
 | --- | --- | --- |
-| `Xenova/yolov8n-pose` (AGPL-3.0) | Browser, Web Worker | Person detection, first pose, and reacquisition every ~1 s; multi-person selection |
+| `JustViping/team-qh-005-wathba-yolov8n-pose` (fine-tuned on MPII exercise photos from `Xenova/yolov8n-pose`) (AGPL-3.0) | Browser, Web Worker | Person detection, first pose, and reacquisition every ~1 s; multi-person selection |
 | `Xenova/movenet-singlepose-lightning` (Apache-2.0) | Browser, Web Worker | Continuous keypoints on the selected person's crop, mapped back to frame coordinates |
 | `usyd-community/vitpose-base-simple` (Apache-2.0) | Wathba backend, on request | Selected-frame check (repetition start/peak) on the tracker's person boxes |
 

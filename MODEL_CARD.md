@@ -1,8 +1,8 @@
 # Wathba motion comparison model
 
-Pose estimation uses three pretrained models, none fine-tuned here:
+Pose estimation uses three models. YOLOv8n-pose is fine-tuned here; the other two are pretrained:
 
-- **YOLOv8n-pose** (`Xenova/yolov8n-pose`, ONNX, AGPL-3.0) runs in the browser. It detects people, selects one (the largest, only when unambiguous; never a non-overlapping bystander once tracking) and reacquires about once a second.
+- **YOLOv8n-pose** (`JustViping/team-qh-005-wathba-yolov8n-pose` (fine-tuned on MPII exercise photos from `Xenova/yolov8n-pose`), ONNX, AGPL-3.0) runs in the browser. It detects people, selects one (the largest, only when unambiguous; never a non-overlapping bystander once tracking) and reacquires about once a second.
 - **MoveNet SinglePose Lightning** (`Xenova/movenet-singlepose-lightning`, ONNX, Apache-2.0) runs in the browser. It returns keypoints for the selected person's square crop, which are mapped back to the original frame.
 - **ViTPose-B simple** (`usyd-community/vitpose-base-simple`, PyTorch, Apache-2.0) runs on the backend only on request. It checks repetition start/peak frames using the tracker's person boxes.
 

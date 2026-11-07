@@ -5,7 +5,7 @@ Installed by `scripts/setup_browser_assets.py`. Every file is pinned by SHA256 i
 | Files | Source | Licence |
 | --- | --- | --- |
 | `ort/` | `onnxruntime-web@1.30.0` (npm, integrity-checked): `ort.wasm.min.mjs`, `ort-wasm-simd-threaded.{mjs,wasm}` | MIT (`ort/LICENSE`) |
-| `models/yolov8n-pose/` (`model_quantized.onnx` for detection, `model.onnx` for keypoints) | [Xenova/yolov8n-pose](https://huggingface.co/Xenova/yolov8n-pose) @ `da4224085e2f6ce4c9ff9b670e28765194619db2`, ONNX export of Ultralytics YOLOv8n-pose | **AGPL-3.0** |
+| `models/yolov8n-pose/` (`model_quantized.onnx` for detection, `model.onnx` for keypoints) | [JustViping/team-qh-005-wathba-yolov8n-pose](https://huggingface.co/JustViping/team-qh-005-wathba-yolov8n-pose) @ `0f109c03e892`, fine-tuned from [Xenova/yolov8n-pose](https://huggingface.co/Xenova/yolov8n-pose) on MPII Human Pose photos (research use) @ `da4224085e2f6ce4c9ff9b670e28765194619db2`, ONNX export of Ultralytics YOLOv8n-pose | **AGPL-3.0** |
 | `models/movenet-singlepose-lightning/` | [Xenova/movenet-singlepose-lightning](https://huggingface.co/Xenova/movenet-singlepose-lightning) @ `ed0f314bb7356fd1dbf1e4f52c2d40791bf6534f`, ONNX export of Google MoveNet SinglePose Lightning | Apache-2.0 |
 
 ViTPose ([usyd-community/vitpose-base-simple](https://huggingface.co/usyd-community/vitpose-base-simple) @ `a93ac0c67e0b7e2c55287d21d4c460c8f3c54d45`, Apache-2.0) is not served to browsers. The optional backend loads it through `transformers` at that revision.

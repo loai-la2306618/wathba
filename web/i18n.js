@@ -4,6 +4,7 @@
 // Switching back restores the original English exactly.
 const KEY = 'wathba-lang';
 const AR = {
+  'Try sample video': 'جرّب الفيديو التجريبي', 'Sample video ready': 'الفيديو التجريبي جاهز', 'Ready to analyse the sample set.': 'جاهز لتحليل الفيديو التجريبي.', 'Loading the sample patient video.': 'جارٍ تحميل الفيديو التجريبي.',
   'Continue exercises': 'كمّل باقي التمارين',
   'Evaluate pain and effort across all exercises you just completed.': 'قيّم الألم والمجهود لكل التمارين اللي خلصتها في الجلسة.',
   'Answers cover all exercises in this session.': 'الإجابات تخص كل تمارين الجلسة.',

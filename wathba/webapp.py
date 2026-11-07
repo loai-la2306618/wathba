@@ -108,11 +108,26 @@ def seed_reference(library):
     source=library/'therapist-squat.mp4'
     if reference_id('squat') or not rows.is_file() or not source.is_file():
         return
-    s=process_browser_video(source,json.loads(rows.read_text(encoding='utf-8')),None,True,'Therapist squat demonstration',exercise='squat')
-    target=storage.root()/'browser-reference.json'
-    temporary=target.with_suffix('.tmp')
-    temporary.write_text(json.dumps({'id':s['id']}), encoding='utf-8')
-    temporary.replace(target)
+    try:
+        s=process_browser_video(source,json.loads(rows.read_text(encoding='utf-8')),None,True,'Therapist squat demonstration',exercise='squat')
+        target=storage.root()/'browser-reference.json'
+        temporary=target.with_suffix('.tmp')
+        temporary.write_text(json.dumps({'id':s['id']}), encoding='utf-8')
+        temporary.replace(target)
+    except Exception as exc:  # The app must still start; a reference can be prepared from the browser.
+        print(f'Could not rebuild the therapist reference: {exc}',flush=True)
+
+
+def known_reference(value):
+    """False for an id from before a restart, which a tab left open can still send."""
+    try:
+        return bool(value and storage.load_reference(value))
+    except (OSError,ValueError,TypeError):
+        return False
+
+
+def reference_locked():
+    return os.getenv('WATHBA_LOCK_REFERENCE')=='1'
 
 
 def public_session(s):
@@ -225,7 +240,7 @@ def create_app():
             cap=cv2.VideoCapture(str(teacher));cap.set(cv2.CAP_PROP_POS_MSEC,1500);ok,frame=cap.read();cap.release()
             if ok:cv2.imwrite(str(poster),frame)
         return {'exercise':'Squat' if exercise=='squat' else 'Jump','exerciseId':exercise,'comparisonAvailable':bool(m),'side':'Left','view':'Front','target':storage.load_plan().target_repetitions,'model':'YOLOv8n-pose + MoveNet SinglePose Lightning (browser)',
-                'referenceAsset':'legacy-reference' if legacy else 'therapist','referenceNeedsRefit':bool(legacy),
+                'referenceAsset':'legacy-reference' if legacy else 'therapist','referenceNeedsRefit':bool(legacy),'referenceLocked':reference_locked(),
                 'pose':{'pipeline':PIPELINE,'maxHz':env_number('WATHBA_POSE_MAX_HZ',15,2,30),'reacquireSeconds':env_number('WATHBA_POSE_REACQUIRE_SECONDS',1,.25,10),
                         'models':{k:{f:v[f] for f in ('label','role','runtime','license')} for k,v in MODELS.items()},
                         'vitpose':dict(zip(('available','reason'),vitpose_service.available()))},
@@ -264,6 +279,7 @@ def create_app():
     @app.post('/api/process')
     def process(request: TrackingRequest):
         if not request.consent:raise HTTPException(400,'Confirm permission to analyse this recording.')
+        if request.reference and reference_locked():raise HTTPException(403,'The therapist reference is locked on this public demo.')
         if request.asset in ('therapist','patient'):
             source=library/f'{request.asset}-{request.exercise}.mp4'
             if request.reference != (request.asset=='therapist'):raise HTTPException(400,'Reference and patient sources must be separate.')
@@ -278,7 +294,8 @@ def create_app():
         if not source.exists():raise HTTPException(404,'Recording not found. Upload it again.')
         with LOCK:
             try:
-                ref=None if request.reference else request.reference_id or reference_id(request.exercise)
+                requested=request.reference_id if known_reference(request.reference_id) else None
+                ref=None if request.reference else requested or reference_id(request.exercise)
                 if not request.reference and not ref and request.exercise=='squat':raise ValueError('Prepare the therapist reference before analysing the patient.')
                 s=process_browser_video(source,request.rows,ref,request.reference,
                                         f'Therapist {request.exercise} demonstration' if request.reference else f'Patient {request.exercise} session', exercise=request.exercise)
