@@ -5,7 +5,7 @@ import {CONFIG as POSE,EDGES,MODELS,joint,toDisplay} from '/static/pose/schema.j
 import {RepCounter} from '/static/rep-counter.js';
 import {repetitionSummary} from '/static/rep-summary.js';
 import {AudioCoach} from '/static/audio-coach.js';
-import {SpeechCoach} from '/static/speech-coach.js';
+import {SpeechCoach,spokenLine} from '/static/speech-coach.js';
 import {evaluateLive,colourForEdge,measurements,liveTone} from '/static/motion-coach.js';
 import {initI18n,currentLang} from '/static/i18n.js';
 initI18n();
@@ -32,7 +32,7 @@ soundControls.className='exercise-options';soundControls.append(soundButton);
 const testSoundButton=document.createElement('button');
 testSoundButton.type='button';testSoundButton.className='secondary';testSoundButton.id='test-sound';testSoundButton.textContent='Test sound';
 soundControls.append(testSoundButton);
-testSoundButton.onclick=async()=>{if(!await audioCoach.preview())toast('Sound could not start on this browser.');speechCoach.stop();speechCoach.say(currentLang()==='ar'?'استمر':'Keep going');};
+testSoundButton.onclick=async()=>{if(!await audioCoach.preview())toast('Sound could not start on this browser.');speechCoach.stop();speechCoach.say(currentLang()==='ar'?'3. أداء ممتاز.':'3. Good form.');};
 soundLabel();$('stage').before(soundControls);
 const sampleButton=document.createElement('button');
 sampleButton.type='button';sampleButton.className='secondary';sampleButton.id='use-sample';sampleButton.textContent='Try sample video';sampleButton.hidden=true;$('upload-video').after(sampleButton);
@@ -40,7 +40,7 @@ soundButton.onclick=async()=>{audioCoach.enabled=!audioCoach.enabled;speechCoach
 const stopCoaching=()=>{audioCoach.stop();speechCoach.stop();};
 function startVoice(){if(!audioCoach.enabled)return;speechCoach.unlock();if(currentLang()==='ar'&&speechCoach.missing('ar'))toast('Arabic voice is not available on this device. Comments stay on screen.');}
 // Waits one tick so the Arabic translation of the comment is what gets read out.
-function speakComment(urgent){setTimeout(()=>{if(state.tracking||state.mode==='analysing')speechCoach.say($('live-hint').textContent,{urgent});},0);}
+function speakLine(outcome,feedback){if(!state.tracking&&state.mode!=='analysing')return;const line=spokenLine(outcome,feedback,repCounter.counted,currentLang());if(line)speechCoach.say(line.text,line);}
 function resetLive(){delete coachBanner.dataset.tone;repCounter.reset();state.liveTorsoScale=null;state.liveParts=null;state.floorPosition=null;}
 function acceptedReps(s){return s.accepted_repetitions??s.cycles.filter(c=>c.accepted===true).length;}
 
@@ -238,7 +238,7 @@ function liveResult(result,t,finishing=false){
  else if(issue)$('live-hint').textContent=liveMessages[issue];
  else if(outcome.calibrating)$('live-hint').textContent='Hold the standing start position steady to begin counting.';
  else $('live-hint').textContent=outcome.completed?(outcome.counted?'Repetition reached 60% reference match and was counted.':'This repetition was not counted.'):feedback.message;
- const tone=liveTone(issue,outcome,feedback);coachBanner.dataset.tone=tone;speakComment(tone==='bad'||Boolean(issue));
+ const tone=liveTone(issue,outcome,feedback);coachBanner.dataset.tone=tone;speakLine(outcome,feedback);
  if(outcome.completed)$('tempo-value').textContent=outcome.duration.toFixed(1)+'s';
  const counts=currentLang()==='ar'?`المرصود: ${repCounter.observed} · وصل إلى 60%: ${repCounter.counted} · الصحيح: ${repCounter.accepted}`:`Detected: ${repCounter.observed} · At least 60%: ${repCounter.counted} · Correct: ${repCounter.accepted}`;
  if(countStatus.textContent!==counts)countStatus.textContent=counts;
