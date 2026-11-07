@@ -52,18 +52,6 @@
       "cropMargin": 0.25,
       "keypointThreshold": 0.3,
       "confidenceKind": "MoveNet heatmap score; model-specific, not MediaPipe visibility"
-    },
-    "vitpose-base-simple": {
-      "repository": "usyd-community/vitpose-base-simple",
-      "revision": "a93ac0c67e0b7e2c55287d21d4c460c8f3c54d45",
-      "label": "ViTPose-B (simple decoder)",
-      "role": "server-side selected-frame check on person boxes supplied by the tracker",
-      "runtime": "Wathba backend (PyTorch / transformers)",
-      "license": "Apache-2.0",
-      "input": {"layout": "NCHW", "dtype": "float32", "width": 192, "height": 256, "resize": "affine crop of the supplied COCO [x, y, w, h] box"},
-      "output": {"fields": "17 COCO keypoints in image pixels with heatmap scores"},
-      "keypointThreshold": 0.3,
-      "confidenceKind": "ViTPose heatmap maximum; model-specific, not MediaPipe visibility"
     }
   },
   "unsupportedMeasurements": {

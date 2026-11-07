@@ -1,4 +1,4 @@
-"""Wathba AI coach: Qwen3 session summaries, patient Q&A and Qwen3-VL frame review.
+"""Wathba AI coach: Qwen3 session summaries and patient Q&A.
 
 Every model answer is checked by wathba/coach.py before it is returned. A failed
 answer is regenerated with other seeds, up to ATTEMPTS tries; if it still fails, the summary is
@@ -100,28 +100,6 @@ def answer(session, question, lang):
     return {**out, 'question': question, 'lang': lang, 'created_at': _now()}
 
 
-def review_frames(session, lang, limit=4):
-    """Qwen3-VL description of repetition start/bottom frames. Experimental; never changes the score."""
-    from .vitpose_service import read_frames
-    times = []
-    for c in session.get('cycles', [])[:2]:
-        times += [c['start'], c['peak_time']]
-    if not times:
-        raise ValueError('No complete repetitions to review.')
-    frames = [f for f in read_frames(session['source_video'], times[:limit]) if f is not None]
-    if not frames:
-        raise ValueError('Could not read frames from this recording.')
-    raw, stats = llm.generate_vision(frames, coach.VISION_PROMPT[lang])
-    text = coach.clean(raw)
-    facts = {'frames': len(frames), 'times': [round(t, 1) for t in times[:limit]], 'needs_attention': False}
-    result = coach.check(text, facts, lang, 'vision')
-    claims = not result['scores'].get('no_medical_claims', True)
-    return {'text': None if claims else text, 'checked': not claims, 'issues': result['issues'] if claims else [],
-            'frame_times': facts['times'], 'stats': stats, 'lang': lang, 'created_at': _now()}
-
-
 def status():
     text_ok, text_reason = llm.available('text')
-    vision_ok, vision_reason = llm.available('vision')
-    return {'text': {'available': text_ok, 'reason': text_reason, 'model': llm.MODELS[llm.DEFAULT_TEXT]['repo']},
-            'vision': {'available': vision_ok, 'reason': vision_reason, 'model': llm.MODELS[llm.DEFAULT_VISION]['repo']}}
+    return {'text': {'available': text_ok, 'reason': text_reason, 'model': llm.MODELS[llm.DEFAULT_TEXT]['repo']}}

@@ -5,8 +5,6 @@
 * JustViping/team-qh-005-wathba-yolov8n-pose (fine-tuned) and Xenova/movenet-singlepose-lightning ONNX weights from
   Hugging Face at fixed revisions, verified by SHA256.
 
-ViTPose is not downloaded here: it runs on the backend (requirements-vitpose.txt)
-and is fetched by transformers at its pinned revision on first use.
 """
 import base64
 import hashlib

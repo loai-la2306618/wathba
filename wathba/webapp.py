@@ -1,4 +1,4 @@
-"""Patient workout frontend with browser pose tracking (YOLOv8n-pose + MoveNet) and a server ViTPose check."""
+"""Patient workout frontend with browser pose tracking (YOLOv8n-pose + MoveNet)."""
 
 import gzip
 import json
@@ -21,7 +21,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from . import storage, remote
-from . import ai as ai_coach, llm, vitpose_service
+from . import ai as ai_coach, llm
 from .browser_pose import HEIGHT_NORMALISATION, process_browser_video
 from .pose_schema import LEGACY_MEDIAPIPE_ENGINE, MODELS, PIPELINE, replay_rows, unavailable_measurements
 from .media import configure_ffmpeg, open_video
@@ -231,6 +231,9 @@ def create_app():
         if request.url.path.startswith('/vendor/') and response.status_code==200:
             # Runtime and weights are pinned by SHA256 (assets/vendor/manifest.json); cache for a week.
             response.headers['Cache-Control']='public, max-age=604800'
+        elif request.url.path=='/' or request.url.path.startswith('/static/'):
+            # Check for a newer page and scripts on every visit, so a deploy reaches phones at once.
+            response.headers['Cache-Control']='no-cache'
         return response
 
     @app.get('/')
@@ -253,8 +256,7 @@ def create_app():
         return {'exercise':'Squat' if exercise=='squat' else 'Jump','exerciseId':exercise,'comparisonAvailable':bool(m),'side':'Left','view':'Front','target':storage.load_plan().target_repetitions,'model':'YOLOv8n-pose + MoveNet SinglePose Lightning (browser)',
                 'referenceAsset':'legacy-reference' if legacy else 'therapist','referenceNeedsRefit':bool(legacy),'referenceLocked':reference_locked(),
                 'pose':{'pipeline':PIPELINE,'maxHz':env_number('WATHBA_POSE_MAX_HZ',15,2,30),'reacquireSeconds':env_number('WATHBA_POSE_REACQUIRE_SECONDS',1,.25,10),
-                        'models':{k:{f:v[f] for f in ('label','role','runtime','license')} for k,v in MODELS.items()},
-                        'vitpose':dict(zip(('available','reason'),vitpose_service.available()))},
+                        'models':{k:{f:v[f] for f in ('label','role','runtime','license')} for k,v in MODELS.items()}},
                 'ai':ai_coach.status(),
                 'referenceId':ref,'referenceModel':m,'referenceUrl':media_url(teacher) if teacher.exists() or (remote.enabled() and remote.exists(teacher)) else None,
                 'sampleUrl':media_url(library/f'patient-{exercise}.mp4') if (library/f'patient-{exercise}.mp4').exists() or (remote.enabled() and remote.exists(library/f'patient-{exercise}.mp4')) else None,
@@ -362,42 +364,20 @@ def create_app():
             return public_session(s)
         except (OSError,ValueError):raise HTTPException(404,'Session not found.')
 
-    @app.post('/api/session/{session_id}/vitpose-check')
-    def vitpose_check(session_id:str,request:CheckRequest):
-        """Optional server-side ViTPose check of selected frames of an already uploaded recording."""
-        if not request.consent:raise HTTPException(400,'Confirm that this recording may be re-analysed on the Wathba server.')
-        ok,reason=vitpose_service.available()
-        if not ok:raise HTTPException(503,reason)
-        try:s=storage.load(session_id)
-        except (OSError,ValueError):raise HTTPException(404,'Session not found.')
-        if s.get('pose_engine')!=PIPELINE:raise HTTPException(400,'This session was recorded with an earlier pose engine and has no tracked person boxes.')
-        if remote.enabled():remote.ensure(s['source_video'])
-        try:result=vitpose_service.check_session(s)
-        except vitpose_service.Unavailable as exc:raise HTTPException(503,str(exc)) from exc
-        except ValueError as exc:raise HTTPException(400,str(exc)) from exc
-        with storage.LOCK:
-            latest=storage.load(session_id)
-            latest.setdefault('model_checks',{})['vitpose']=result
-            storage.save(latest)
-        remote.persist_session(session_id)
-        return result
-
     def run_ai(session_id, request, kind, work):
         """Shared consent, availability and storage handling for the Qwen3 features."""
         if not request.consent:raise HTTPException(400,'Confirm that this session may be processed by the Qwen3 model on the Wathba server.')
-        ok,reason=llm.available('vision' if kind=='vision' else 'text')
+        ok,reason=llm.available('text')
         if not ok:raise HTTPException(503,reason)
         try:s=storage.load(session_id)
         except (OSError,ValueError):raise HTTPException(404,'Session not found.')
-        if kind=='vision' and remote.enabled():remote.ensure(s['source_video'])
         try:result=work(s)
         except llm.Unavailable as exc:raise HTTPException(503,str(exc)) from exc
         except ValueError as exc:raise HTTPException(400,str(exc)) from exc
         with storage.LOCK:
             latest=storage.load(session_id);store=latest.setdefault('ai',{})
             if kind=='summary':store.setdefault('summary',{})[request.lang]=result
-            elif kind=='question':store['questions']=[*store.get('questions',[]),result][-20:]
-            else:store['vision']=result
+            else:store['questions']=[*store.get('questions',[]),result][-20:]
             storage.save(latest)
         remote.persist_session(session_id)
         return result
@@ -410,9 +390,6 @@ def create_app():
     def ai_ask(session_id:str,request:AiRequest):
         return run_ai(session_id,request,'question',lambda s:ai_coach.answer(s,request.question,request.lang))
 
-    @app.post('/api/session/{session_id}/ai/vision')
-    def ai_vision(session_id:str,request:AiRequest):
-        return run_ai(session_id,request,'vision',lambda s:ai_coach.review_frames(s,request.lang))
 
     @app.get('/api/history')
     def history():

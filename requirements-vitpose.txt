@@ -1,6 +1,0 @@
-# Optional backend: ViTPose-B selected-frame check (and the legacy ViTPose-plus CLI). Browser tracking needs none of this.
---extra-index-url https://download.pytorch.org/whl/cpu
--r requirements.txt
-transformers==4.57.1
-torch>=2.6,<3
-torchvision>=0.21,<1

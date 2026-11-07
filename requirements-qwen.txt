@@ -1,5 +1,4 @@
-# Optional: Qwen3 text + Qwen3-VL vision models running locally on an NVIDIA GPU (CUDA 12.x).
-# Replaces the CPU-only torch from requirements-vitpose.txt; ViTPose runs on this build too.
+# Optional: Qwen3 text model running locally on an NVIDIA GPU (CUDA 12.x).
 --extra-index-url https://download.pytorch.org/whl/cu126
 -r requirements.txt
 torch==2.14.1

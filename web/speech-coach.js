@@ -1,12 +1,12 @@
 // Reads short coaching lines aloud with the browser's built-in speech engine.
-// A line is never cut off: while one is playing, only the newest waiting line is kept,
-// and it plays next if it is still fresh. A rep count outranks a correction.
+// Lines wait their turn: one plays at a time, never cut off and never on top of another.
+// The wait is kept short, so a line that waited too long is dropped instead of arriving late.
 const ARABIC=/[؀-ۿ]/;
-export const REPEAT_SECONDS=6,STALE_SECONDS=2.5,COUNT_STALE_SECONDS=4;
+export const REPEAT_SECONDS=6,STALE_SECONDS=3,MAX_WAITING=2;
 
 const LINES={
- en:{good:'Good form.',notCounted:'Not counted.',knee:'Watch your knee.',trunk:'Chest up.',form:'Check your form.',view:'Step back into view.',depth:'Match the depth.',pace:'Match the pace.'},
- ar:{good:'أداء ممتاز.',notCounted:'لم يُحتسب.',knee:'انتبه لركبتك.',trunk:'ارفع صدرك.',form:'راجع حركتك.',view:'ارجع للخلف ليظهر جسمك.',depth:'اتبع عمق الحركة.',pace:'اتبع سرعة الحركة.'},
+ en:{good:'Good form.',knee:'Watch your knee.',trunk:'Chest up.',form:'Check your form.',view:'Step back into view.',depth:'Go a bit deeper.',pace:'Slow down.'},
+ ar:{good:'أداء ممتاز.',knee:'انتبه لركبتك.',trunk:'ارفع صدرك.',form:'راجع حركتك.',view:'ارجع للخلف ليظهر جسمك.',depth:'انزل أكثر قليلًا.',pace:'أبطئ قليلًا.'},
 };
 
 function correction(issue,feedback,words){
@@ -21,12 +21,13 @@ function correction(issue,feedback,words){
 }
 
 // What to say for one frame of live feedback, or null to stay quiet.
+// Only a correction to the pose, or praise for a repetition done well.
 export function spokenLine(outcome,feedback,counted,lang='en'){
  const words=LINES[lang==='ar'?'ar':'en'];
  const fix=correction(outcome?.issue,feedback,words);
  if(outcome?.completed){
-  if(outcome.counted)return {text:[`${counted}.`,outcome.accepted?words.good:fix].filter(Boolean).join(' '),priority:3,key:`rep-${counted}`};
-  return {text:fix||words.notCounted,priority:2,key:`missed-${fix}`};
+  if(outcome.counted&&outcome.accepted&&!fix)return {text:words.good,priority:2,key:`good-${counted}`};
+  return {text:fix||words.form,priority:2,key:fix||words.form};
  }
  if(fix)return {text:fix,priority:1,key:fix};
  return null;
@@ -47,11 +48,13 @@ export function voiceScore(voice,lang){
 }
 
 export class SpeechCoach {
- constructor({synth=globalThis.speechSynthesis,Utterance=globalThis.SpeechSynthesisUtterance,now=()=>performance.now()/1000,timer=globalThis.setTimeout,clear=globalThis.clearTimeout}={}){
+ constructor({synth=globalThis.speechSynthesis,Utterance=globalThis.SpeechSynthesisUtterance,now=()=>performance.now()/1000,timer=(f,ms)=>globalThis.setTimeout(f,ms),clear=id=>globalThis.clearTimeout(id)}={}){
+  // Wrapped: a browser timer called as a method of this object throws "Illegal invocation".
+  
   this.synth=synth;this.Utterance=Utterance;this.now=now;this.timer=timer;this.clear=clear;this.enabled=true;this.reset();
  }
  get supported(){return Boolean(this.synth&&this.Utterance);}
- reset(){this.playing=null;this.pending=null;this.heard=new Map();if(this.watchdog)this.clear?.(this.watchdog);this.watchdog=null;}
+ reset(){this.playing=null;this.queue=[];this.heard=new Map();if(this.watchdog)this.clear?.(this.watchdog);this.watchdog=null;}
  voice(lang){
   const voices=(this.synth?.getVoices?.()||[]).filter(v=>v.lang?.toLowerCase().startsWith(lang));
   return voices.sort((a,b)=>voiceScore(b,lang)-voiceScore(a,lang))[0]||null;
@@ -69,12 +72,16 @@ export class SpeechCoach {
   if(!this.enabled||!this.supported||!text)return false;
   const time=this.now(),last=this.heard.get(key);
   if(last!==undefined&&time-last<REPEAT_SECONDS)return false;
+  if(this.queue.some(item=>item.key===key))return false;
   const item={text,priority,key,at:time};
-  if(this.playing){
-   if(!this.pending||priority>=this.pending.priority)this.pending=item;
-   return 'queued';
+  if(!this.playing)return this.play(item);
+  this.queue.push(item);
+  // Keep the wait short: drop the least important (then oldest) line.
+  while(this.queue.length>MAX_WAITING){
+   const lowest=this.queue.reduce((a,b)=>b.priority<a.priority?b:a);
+   this.queue.splice(this.queue.indexOf(lowest),1);
   }
-  return this.play(item);
+  return 'queued';
  }
  play(item){
   const lang=ARABIC.test(item.text)?'ar':'en',voice=this.voice(lang);
@@ -84,18 +91,22 @@ export class SpeechCoach {
   const done=()=>this.finished(line);
   line.onend=done;line.onerror=done;
   this.playing=line;this.heard.set(item.key,item.at);
-  // Some browsers never fire onend. Allow about a third of a second per word, plus a margin.
-  this.watchdog=this.timer?.(done,(1.5+item.text.split(/\s+/).length*.35)*1000);
+  this.arm(line,(1.5+item.text.split(/\s+/).length*.35)*1000,0);
   this.synth.speak(line);
   return true;
+ }
+ // Some browsers never fire onend. Move on after a while, but never while the voice is still talking.
+ arm(line,wait,tries){
+  this.watchdog=this.timer?.(()=>{if(this.playing!==line)return;if(this.synth.speaking&&tries<6)this.arm(line,500,tries+1);else this.finished(line);},wait);
  }
  finished(line){
   if(this.playing!==line)return;
   if(this.watchdog)this.clear?.(this.watchdog);
   this.playing=null;this.watchdog=null;
-  const next=this.pending;this.pending=null;
-  if(!next||!this.enabled)return;
-  const age=this.now()-next.at;
-  if(age<=(next.priority>=3?COUNT_STALE_SECONDS:STALE_SECONDS))this.play(next);
+  if(!this.enabled)return;
+  const time=this.now();
+  this.queue=this.queue.filter(item=>time-item.at<=STALE_SECONDS);
+  const next=this.queue.shift();
+  if(next)this.play(next);
  }
 }

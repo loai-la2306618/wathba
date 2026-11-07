@@ -7,13 +7,16 @@ sdk: gradio
 sdk_version: 5.49.1
 app_file: app.py
 python_version: '3.12'
+models:
+  - JustViping/team-qh-005-wathba-yolov8n-pose
+  - Xenova/movenet-singlepose-lightning
+  - Qwen/Qwen3-4B-Instruct-2507
 tags:
   - qai-hf-hackathon-2026
   - physiotherapy
   - pose-estimation
   - yolov8-pose
   - movenet
-  - vitpose
 license: apache-2.0
 ---
 
@@ -23,13 +26,12 @@ license: apache-2.0
 
 A dark-glass, mint-accented guided rehabilitation prototype for Qai × Hugging Face in Qatar. **Assigned exercise → therapist demonstration → live camera or upload → feedback and per-rep scores → skeleton/video replay → physio report.**
 
-The patient app tracks pose in the browser with **ONNX Runtime Web**, using three pretrained models with separate roles:
+The patient app tracks pose in the browser with **ONNX Runtime Web**, using two pretrained models with separate roles:
 
 | Model | Where | Role |
 | --- | --- | --- |
 | `JustViping/team-qh-005-wathba-yolov8n-pose` (fine-tuned on MPII exercise photos from `Xenova/yolov8n-pose`) (AGPL-3.0) | Browser, Web Worker | Person detection, first pose, and reacquisition every ~1 s; multi-person selection |
 | `Xenova/movenet-singlepose-lightning` (Apache-2.0) | Browser, Web Worker | Continuous keypoints on the selected person's crop, mapped back to frame coordinates |
-| `usyd-community/vitpose-base-simple` (Apache-2.0) | Wathba backend, on request | Selected-frame check (repetition start/peak) on the tracker's person boxes |
 
 All three output 17 COCO keypoints in 2D with model-specific scores. They do not output MediaPipe's 33 landmarks, depth or visibility. Results use a shared named-joint schema (`web/pose/models.json`, `wathba.pose/1`). The Python backend compares movement with the therapist reference, extracts actual source clips and saves the report. No pretrained neural-network fine-tuning is performed.
 
@@ -48,20 +50,6 @@ Browser runtime: `onnxruntime-web@1.30.0` (WebAssembly) plus the YOLOv8n-pose an
 
 **Licence:** YOLOv8n-pose is AGPL-3.0. See `assets/vendor/NOTICE.md` before deploying.
 
-### Optional ViTPose check service
-
-ViTPose-B ships only PyTorch weights (~344 MB, 86M parameters) and needs a person box per frame, so it runs in the existing FastAPI backend rather than the browser:
-
-```sh
-uv pip install --python .venv/bin/python -r requirements-vitpose.txt   # torch (CPU), transformers 4.57.1
-.venv/bin/python app.py
-```
-
-The report page shows **Run ViTPose check** when these packages are installed. The check needs an explicit consent tick, and runs on the recording already uploaded to the Wathba server; no third-party service is used. `POST /api/session/{id}/vitpose-check` with `{"consent": true}` re-analyses repetition start/peak frames, at most 24, using the stored person boxes. The first run downloads the weights from Hugging Face at the pinned revision. Set `WATHBA_OFFLINE=1` to use only the local cache, or `WATHBA_VITPOSE=0` to disable the check. Without the packages, the endpoint returns 503 with the reason, and the report says the check is unavailable. Results are stored separately as `model_checks.vitpose`, as per-frame differences between the browser model and ViTPose. They never change the session score.
-
-Performance: the server sends cross-origin isolation headers (COOP/COEP), so ONNX Runtime uses up to 4 WebAssembly threads. Set `WATHBA_CROSS_ORIGIN_ISOLATION=0` to turn this off; it is off by default in remote-storage mode. Models preload and warm up in the background on the home screen, and the pinned runtime and model files are cached by the browser for a week. Person detection uses YOLOv8n-pose's 8-bit quantized weights (3.7 MB instead of 13.5 MB; boxes matched full precision with IoU ≥ 0.97 on the test clip). The full-precision weights load only if YOLO has to supply measurement keypoints. On the 16.5 s test clip in Edge, analysis takes about 8 s (previously 14 s), and live inference takes about 55 ms per frame (previously 126 ms).
-
-Tuning: `WATHBA_POSE_MAX_HZ` (default 15; capped at 8 on devices with ≤4 cores or ≤4 GB) and `WATHBA_POSE_REACQUIRE_SECONDS` (default 1).
 
 ## The two footage roles
 
@@ -87,7 +75,6 @@ The report has an **AI coach** card with three optional features. Each one needs
 
 - **Session summary** in the interface language, written by `Qwen/Qwen3-4B-Instruct-2507` (4-bit NF4 on GPUs under 12 GB) from the measured results and the patient's post-exercise answers.
 - **Questions about the session.** Clinical decisions (healing, more load, return to sport) are referred to the physiotherapist.
-- **Vision model review** (experimental, under Technical details). `Qwen/Qwen3-VL-4B-Instruct` describes the start and bottom frames of the first repetitions. It never changes the score.
 
 Every reply is checked by `wathba/coach.py` before it is shown:
 - every number must come from the session (simple differences of two measured values are allowed);
@@ -106,7 +93,6 @@ python app.py                             # models download on first use (about 
 
 Environment variables:
 - `WATHBA_QWEN_TEXT_MODEL`: one of `qwen3-0.6b`, `qwen3-1.7b`, `qwen3-4b`.
-- `WATHBA_QWEN_VISION_MODEL`: `qwen3-vl-2b` or `qwen3-vl-4b`.
 - `WATHBA_QWEN=0`: disables the AI coach.
 - `WATHBA_OFFLINE=1`: uses only the local model cache.
 
@@ -157,7 +143,7 @@ The review ZIP contains printable HTML, JSON and playable source clips. Extract 
 
 ```sh
 uv pip install --python .venv/bin/python pytest
-.venv/bin/python -m pytest -q          # Python: schema, features, ViTPose service/endpoint, pipeline
+.venv/bin/python -m pytest -q          # Python: schema, features, pipeline
 npm install && npm test                # Node (dev only): adapters, transforms, engine, real ONNX models
 WATHBA_TEST_VIDEO=/path/to/frontal-squat.mp4 npm test   # also runs the real-model multi-person/occlusion tests
 node scripts/track_video.mjs video.mp4 rows.json        # browser engine on a video -> wathba.pose/1 rows
@@ -171,6 +157,6 @@ Migration check (2026-11-06) on one 16.5 s frontal barbell-squat clip, 464×832.
 
 The private paid Hugging Face development Space is kept **paused**. The original Hugging Face Space has not been resumed. A separate password-protected team preview is deployed on Vercel, with private Hugging Face dataset storage; see `SHARING.md` for access handling and the smaller preview upload/recording limits. Local browser tracking does not consume the team's Space runtime credits. Hosting runtime billing applies when a paid Space is resumed.
 
-The older ViTPose-plus/RT-DETR CLI (`scripts/analyse_recording.py`) remains available for offline comparison; it is separate from the patient flow and the ViTPose check above.
+The older ViTPose-plus/RT-DETR CLI (`scripts/analyse_recording.py`) remains available for offline comparison; it is separate from the patient flow.
 
 See `MODEL_CARD.md` and `RESEARCH_NOTES.md` for provenance and limitations. Vendor code/model attribution is under `assets/vendor/`.
