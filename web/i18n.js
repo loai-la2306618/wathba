@@ -22,6 +22,7 @@ const AR = {
   'Counting needs a matching therapist reference. Prepare the reference for the active pose model.': 'العد يحتاج مرجع معالج متوافقًا مع نموذج التتبع الحالي. أعد تجهيز المرجع.',
   'Check your movement': 'راجع حركتك', 'Get ready': 'استعد', 'Reference matched': 'مطابق للمرجع',
   'Sound alerts: on': 'التنبيه الصوتي: مفعّل', 'Sound alerts: muted': 'التنبيه الصوتي: مكتوم',
+  'User': 'مستخدم',
   'Voice and sound: on': 'الصوت والنطق: مفعّل', 'Voice and sound: muted': 'الصوت والنطق: مكتوم',
   'Arabic voice is not available on this device. Comments stay on screen.': 'الصوت العربي غير متاح على هذا الجهاز. ستبقى الملاحظات على الشاشة.',
   'Matched reps': 'التكرارات المطابقة', 'Matched reps played': 'التكرارات المطابقة المعروضة',
@@ -268,7 +269,7 @@ const ltr = text => `⁦${text}⁩`;
 const PARTS = {'Timing': 'التوقيت', 'Legs / pelvis': 'الساقان / الحوض', 'Trunk': 'الجذع', 'Left knee': 'الركبة اليسرى'};
 const UNITS = {'torso lengths': 'من طول الجذع', 'leg lengths': 'من طول الساق', 'deg': 'درجة', 's': 'ث'};
 const PATTERNS = [
-  [/^Good (morning|afternoon|evening), (.+)$/, m => `${{morning: 'صباح الخير', afternoon: 'مساء الخير', evening: 'مساء الخير'}[m[1]]}، ${m[2]}`],
+  [/^Good (morning|afternoon|evening), (.+)$/, m => `${{morning: 'صباح الخير', afternoon: 'مساء الخير', evening: 'مساء الخير'}[m[1]]}، ${m[2] === 'User' ? 'مستخدم' : m[2]}`],
   [/^(\d+) reps?$/, m => `${m[1]} ${+m[1] === 1 ? 'تكرار' : 'تكرارات'}`],
   [/^(\d+) sec$/, m => `${m[1]} ث`], [/^([\d.]+) min$/, m => `${m[1]} د`],
   [/^1 set × (\d+) reps$/, m => `مجموعة واحدة × ${m[1]} تكرارات`],
