@@ -69,6 +69,18 @@ def unload():
                 torch.cuda.empty_cache()
 
 
+def preload():
+    """Load the coach in the background on a GPU, so the first summary does not wait for it."""
+    def run():
+        try:
+            import torch
+            if available('text')[0] and torch.cuda.is_available():
+                load(DEFAULT_TEXT)
+        except Exception as exc:  # A later request retries and shows the reason.
+            print(f'Could not preload Qwen: {exc}', flush=True)
+    threading.Thread(target=run, daemon=True, name='qwen-preload').start()
+
+
 def load(key):
     """Load (or reuse) one model. Returns a bundle dict."""
     if key not in MODELS:
@@ -84,12 +96,15 @@ def load(key):
             import transformers
             offline = os.getenv('WATHBA_OFFLINE', '0') == '1'
             cuda = torch.cuda.is_available()
+            # Older GPUs such as the T4 only emulate bf16, which is very slow.
+            native_bf16 = cuda and torch.cuda.is_bf16_supported(including_emulation=False)
+            half = torch.bfloat16 if native_bf16 else torch.float16
             kwargs = {'revision': spec['revision'], 'local_files_only': offline,
-                      'dtype': torch.bfloat16 if cuda else torch.float32, 'device_map': 'cuda:0' if cuda else 'cpu'}
+                      'dtype': half if cuda else torch.float32, 'device_map': 'cuda:0' if cuda else 'cpu'}
             mode = quantize(key)
             if mode == 'nf4':
                 kwargs['quantization_config'] = transformers.BitsAndBytesConfig(
-                    load_in_4bit=True, bnb_4bit_quant_type='nf4', bnb_4bit_compute_dtype=torch.bfloat16, bnb_4bit_use_double_quant=True)
+                    load_in_4bit=True, bnb_4bit_quant_type='nf4', bnb_4bit_compute_dtype=half, bnb_4bit_use_double_quant=True)
             if spec['kind'] == 'text':
                 tokenizer = transformers.AutoTokenizer.from_pretrained(spec['repo'], revision=spec['revision'], local_files_only=offline)
                 model = transformers.AutoModelForCausalLM.from_pretrained(spec['repo'], **kwargs).eval()
@@ -98,9 +113,10 @@ def load(key):
                 processor = transformers.AutoProcessor.from_pretrained(spec['repo'], revision=spec['revision'], local_files_only=offline)
                 model = transformers.AutoModelForImageTextToText.from_pretrained(spec['repo'], **kwargs).eval()
                 bundle = {'processor': processor, 'model': model}
-            bundle.update(key=key, device='cuda' if cuda else 'cpu', precision=mode or ('bf16' if cuda else 'fp32'))
+            bundle.update(key=key, device='cuda' if cuda else 'cpu', precision=mode or (('bf16' if native_bf16 else 'fp16') if cuda else 'fp32'))
         except Exception as exc:  # download, memory or version problems are reported, never simulated
-            _state['errors'][key] = f"{spec['repo']} could not be loaded: {exc}"[:400]
+            cause = f' ({exc.__cause__!r})' if exc.__cause__ else ''
+            _state['errors'][key] = f"{spec['repo']} could not be loaded: {exc}{cause}"[:400]
             raise Unavailable(_state['errors'][key]) from exc
         _state['load_seconds'][key] = round(time.perf_counter() - started, 2)
         _state.update(key=key, bundle=bundle)

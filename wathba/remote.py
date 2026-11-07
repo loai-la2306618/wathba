@@ -26,7 +26,7 @@ def token():return os.environ['WATHBA_STORAGE_TOKEN']
 def manifest():
     from huggingface_hub import hf_hub_download
     p=hf_hub_download(os.environ['WATHBA_REMOTE_REPO'],'workspace/manifest.json',repo_type='dataset',token=token(),cache_dir='/tmp/wathba-hf-cache')
-    return json.loads(Path(p).read_text())
+    return json.loads(Path(p).read_text(encoding='utf-8'))
 
 def canonical(path):return manifest().get('aliases',{}).get(relative_path(path),relative_path(path))
 
@@ -92,7 +92,7 @@ def persist_session(session_id):
     for p in folder.iterdir():
         if not p.is_file() or p.name.endswith('-raw.mp4') or p.suffix=='.tmp':continue
         content=p
-        if p.name=='report.json':content=json.dumps(portable(json.loads(p.read_text())),ensure_ascii=False,allow_nan=False).encode()
+        if p.name=='report.json':content=json.dumps(portable(json.loads(p.read_text(encoding='utf-8'))),ensure_ascii=False,allow_nan=False).encode()
         operations.append(CommitOperationAdd(path_in_repo=f'workspace/{session_id}/{p.name}',path_or_fileobj=content))
     HfApi(token=token()).create_commit(os.environ['WATHBA_REMOTE_REPO'],repo_type='dataset',operations=operations,commit_message='Save consented shared demo session')
 

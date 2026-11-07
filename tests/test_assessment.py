@@ -36,6 +36,28 @@ def test_adaptive_count_does_not_require_original_demo_angles():
     assert len(segment_cycles(samples)) == 4
 
 
+def test_only_reference_matched_repetitions_are_accepted():
+    model = reference()
+    result = assess(recording(durations=(3, 1.3, 3, 3), amplitudes=[65, 65, 32, 65]), Plan(), model)
+    assert result["repetitions"] == 4
+    assert result["accepted_repetitions"] < result["repetitions"]
+    assert all(not c["accepted"] for c in result["cycles"] if c["findings"])
+    matched = assess(recording(), Plan(), model)
+    assert matched["accepted_repetitions"] == 4
+
+
+def test_missing_reference_or_comparison_features_never_means_correct():
+    samples = recording()
+    assert assess(samples, Plan())["accepted_repetitions"] == 0
+    model = reference(samples)
+    for sample in samples:
+        sample["features"].pop("torso_lean", None)
+        sample["feature_confidence"].pop("torso_lean", None)
+    result = assess(samples, Plan(), model)
+    assert result["repetitions"] == 4
+    assert result["accepted_repetitions"] == 0
+
+
 def test_can_start_at_either_end_of_movement():
     assert len(segment_cycles(recording(offset=170, polarity=-1))) == 4
 

@@ -23,9 +23,12 @@ def configure_ffmpeg():
     from .storage import root
     tools_dir = root() / "tools"
     tools_dir.mkdir(exist_ok=True)
-    link = tools_dir / "ffmpeg"
+    link = tools_dir / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
     if not link.exists():
-        link.symlink_to(imageio_ffmpeg.get_ffmpeg_exe())
+        try:
+            link.symlink_to(imageio_ffmpeg.get_ffmpeg_exe())
+        except OSError:  # Windows only allows symlinks with Developer Mode or admin rights.
+            shutil.copy2(imageio_ffmpeg.get_ffmpeg_exe(), link)
     os.environ["PATH"] = str(tools_dir) + os.pathsep + os.environ.get("PATH", "")
 
 
@@ -37,10 +40,37 @@ def encode_mp4(raw_path, output):
     return str(output)
 
 
+class Mp4Writer:
+    """Encode OpenCV frames once, straight to a browser-playable MP4."""
+
+    def __init__(self, output, size, fps):
+        self.process = subprocess.Popen(
+            [imageio_ffmpeg.get_ffmpeg_exe(), "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "bgr24",
+             "-s", f"{size[0]}x{size[1]}", "-r", str(fps), "-i", "-", "-an", "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+             "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(output)],
+            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def write(self, frame):
+        self.process.stdin.write(frame.tobytes())
+
+    def close(self):
+        try:
+            self.process.stdin.close()
+        except OSError:
+            pass
+        try:
+            self.process.wait(timeout=90)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            raise ValueError("Could not create the annotated video.")
+        if self.process.returncode:
+            raise ValueError("Could not create the annotated video.")
+
+
 def clip_video(source, output, start, end, duration):
     start, end = max(0, start - 0.65), min(duration, end + 0.65)
     subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-y", "-loglevel", "error", "-ss", str(start), "-i", str(source),
-                    "-t", str(max(0.2, end - start)), "-an", "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+                    "-t", str(max(0.2, end - start)), "-an", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26", "-pix_fmt", "yuv420p",
                     "-movflags", "+faststart", str(output)], check=True, capture_output=True, timeout=45)
     return str(output), round(start, 3), round(end, 3)
 

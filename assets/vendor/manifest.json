@@ -6,9 +6,10 @@
   },
   "models": {
     "yolov8n-pose": {
-      "repository": "Xenova/yolov8n-pose",
-      "revision": "da4224085e2f6ce4c9ff9b670e28765194619db2",
-      "license": "AGPL-3.0"
+      "repository": "JustViping/team-qh-005-wathba-yolov8n-pose",
+      "revision": "0f109c03e89223da0b9b070672cdde933ddad927",
+      "license": "AGPL-3.0",
+      "base_model": "Xenova/yolov8n-pose@da4224085e2f6ce4c9ff9b670e28765194619db2"
     },
     "movenet-singlepose-lightning": {
       "repository": "Xenova/movenet-singlepose-lightning",
@@ -20,8 +21,8 @@
     "models/movenet-singlepose-lightning/config.json": "dddf6d4409af28ffd04284d00f4f06b2dc3f0615ab2657fd70e5cb1a6e70137d",
     "models/movenet-singlepose-lightning/model.onnx": "1ad4f8d6c2f776a9967db3993c9ca740bc350104f9d37c151dc183fc29a464ad",
     "models/yolov8n-pose/config.json": "005945fdfc71f2716e24c1db8ea67994e95fb58206c2750ed6ea4011d7a23925",
-    "models/yolov8n-pose/model.onnx": "04f6d2416266f2aba6c5ba8b26de33ed9eba3279f972ac02e33f9f1366547586",
-    "models/yolov8n-pose/model_quantized.onnx": "8fc1edb4977c37bf8b8a6c4cfd1dca7a0b46a67d6ef33088ac69e76e0ea84270",
+    "models/yolov8n-pose/model.onnx": "445d64b31897afe25d22c2cf97867c845906053b97c6c4256ba3b76f16365f86",
+    "models/yolov8n-pose/model_quantized.onnx": "276ff8bdb0f661591cf8391174a145f7085597955473726839fa36b04f93a2e7",
     "models/yolov8n-pose/preprocessor_config.json": "ab3bdd56daa5f2d59ec8f8723ae8bdf4ef28cb067d3688e99932c21bcb1fe151",
     "ort/LICENSE": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
     "ort/ort-wasm-simd-threaded.mjs": "e13f7f94fc51b4ca72b12faeb1ee95f4ace6dfbc8939bc718aabdc0a27c4299b",

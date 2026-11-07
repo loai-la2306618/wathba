@@ -11,7 +11,7 @@ import numpy as np
 from . import storage
 from .assessment import pose_features, normalise_frontal_height, valid
 from .inference import DETECTOR_ID, POSE_ID, PoseTracker, models
-from .media import draw_pose, encode_mp4, open_video
+from .media import Mp4Writer, draw_pose, open_video
 
 
 def cache_key(path, plan):
@@ -32,7 +32,7 @@ def extract(path, plan, progress=lambda *_: None):
     stored = cache / f"{key}.json"
     if stored.is_file():
         cap.release()
-        record = json.loads(stored.read_text())
+        record = json.loads(stored.read_text(encoding='utf-8'))
         record["cache_hit"] = True
         return record
     tracker = PoseTracker(plan.subject_roi)
@@ -80,7 +80,7 @@ def extract(path, plan, progress=lambda *_: None):
               "detector_revision": getattr(detector.config, "_commit_hash", None),
               "extraction_seconds": round(time.monotonic() - start, 3), "cache_hit": False}
     temp = stored.with_suffix(".tmp")
-    temp.write_text(json.dumps(record, allow_nan=False))
+    temp.write_text(json.dumps(record, allow_nan=False), encoding='utf-8')
     temp.replace(stored)
     return record
 
@@ -102,19 +102,20 @@ def measured_samples(record, plan):
 
 
 def render_overlay(source, output, record, samples, progress=lambda *_: None, flags=None, reference=None):
-    """Retain source motion at up to 24 fps; interpolate only the displayed overlay."""
+    """Write the replay at about 15 fps; interpolate only the displayed overlay."""
     cap, source_fps, _duration = open_video(source)
-    stride = max(1, round(source_fps / 24))
+    stride = max(1, round(source_fps / 15))
     fps = source_fps / stride
-    raw = Path(output).with_name("overlay-raw.mp4")
     size = (record["width"], record["height"])
-    writer = cv2.VideoWriter(str(raw), cv2.VideoWriter_fourcc(*"mp4v"), fps, size)
-    if not writer.isOpened():
-        cap.release()
-        raise ValueError("Could not create the annotated video.")
+    writer = Mp4Writer(output, size, fps)
     i, cursor = 0, 0
     try:
         while True:
+            if i % stride:
+                if not cap.grab():  # Skipped frames need no decoding.
+                    break
+                i += 1
+                continue
             ok, frame = cap.read()
             if not ok:
                 break
@@ -129,7 +130,7 @@ def render_overlay(source, output, record, samples, progress=lambda *_: None, fl
                     delta = following["time"] - s["time"]
                     if points is not None and following["points"] is not None and delta <= .4:
                         alpha = min(1, max(0, (t - s["time"]) / delta))
-                        points = (np.array(points) * (1 - alpha) + np.array(following["points"]) * alpha).tolist()
+                        points = (np.array(points, float) * (1 - alpha) + np.array(following["points"], float) * alpha).tolist()
                         scores = np.minimum(scores, following["scores"]).tolist()
                         if reliable is not None and following.get("reliable") is not None:
                             reliable = [a and b for a, b in zip(reliable, following["reliable"])]
@@ -150,7 +151,7 @@ def render_overlay(source, output, record, samples, progress=lambda *_: None, fl
                 writer.write(draw_pose(frame, points, scores, s["angle"], t, caption=caption, review=review, parts=parts, reliable=reliable))
             i += 1
     finally:
-        writer.release()
         cap.release()
-    progress(.93, "Encoding the movement overlay.")
-    return encode_mp4(raw, output)
+        progress(.93, "Encoding the movement overlay.")
+        writer.close()
+    return str(output)

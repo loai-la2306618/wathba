@@ -2,7 +2,7 @@
 
 * ONNX Runtime Web (WebAssembly build) from npm, verified against the registry
   integrity hash.
-* Xenova/yolov8n-pose and Xenova/movenet-singlepose-lightning ONNX weights from
+* JustViping/team-qh-005-wathba-yolov8n-pose (fine-tuned) and Xenova/movenet-singlepose-lightning ONNX weights from
   Hugging Face at fixed revisions, verified by SHA256.
 
 ViTPose is not downloaded here: it runs on the backend (requirements-vitpose.txt)
@@ -29,8 +29,8 @@ ORT_LICENSE = f'https://raw.githubusercontent.com/microsoft/onnxruntime/v{ORT_VE
 # SHA256 of the exact files served to browsers. A mismatch stops setup.
 MODEL_FILES = {
     'yolov8n-pose': {
-        'onnx/model.onnx': '04f6d2416266f2aba6c5ba8b26de33ed9eba3279f972ac02e33f9f1366547586',
-        'onnx/model_quantized.onnx': '8fc1edb4977c37bf8b8a6c4cfd1dca7a0b46a67d6ef33088ac69e76e0ea84270',
+        'onnx/model.onnx': '445d64b31897afe25d22c2cf97867c845906053b97c6c4256ba3b76f16365f86',
+        'onnx/model_quantized.onnx': '276ff8bdb0f661591cf8391174a145f7085597955473726839fa36b04f93a2e7',
         'config.json': '005945fdfc71f2716e24c1db8ea67994e95fb58206c2750ed6ea4011d7a23925',
         'preprocessor_config.json': 'ab3bdd56daa5f2d59ec8f8723ae8bdf4ef28cb067d3688e99932c21bcb1fe151',
     },

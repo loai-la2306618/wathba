@@ -27,7 +27,7 @@ The patient app tracks pose in the browser with **ONNX Runtime Web**, using thre
 
 | Model | Where | Role |
 | --- | --- | --- |
-| `Xenova/yolov8n-pose` (AGPL-3.0) | Browser, Web Worker | Person detection, first pose, and reacquisition every ~1 s; multi-person selection |
+| `JustViping/team-qh-005-wathba-yolov8n-pose` (fine-tuned on MPII exercise photos from `Xenova/yolov8n-pose`) (AGPL-3.0) | Browser, Web Worker | Person detection, first pose, and reacquisition every ~1 s; multi-person selection |
 | `Xenova/movenet-singlepose-lightning` (Apache-2.0) | Browser, Web Worker | Continuous keypoints on the selected person's crop, mapped back to frame coordinates |
 | `usyd-community/vitpose-base-simple` (Apache-2.0) | Wathba backend, on request | Selected-frame check (repetition start/peak) on the tracker's person boxes |
 
@@ -97,7 +97,7 @@ Every reply is checked by `wathba/coach.py` before it is shown:
 - the requested language, with no third-script characters and no leaked data field names;
 - a short length.
 
-A failing summary is regenerated once and withheld if it still fails; a failing answer is replaced by a fixed referral. When the answers need attention and the model omits the referral, the app adds a fixed safety sentence instead of relying on the model. Arabic answers use Arabic instructions and Arabic fact labels.
+A failing summary is regenerated up to twice and withheld if it still fails; a failing answer is replaced by a fixed referral. When the answers need attention and the model omits the referral, the app adds a fixed safety sentence instead of relying on the model. Arabic answers use Arabic instructions and Arabic fact labels.
 
 ```sh
 pip install -r requirements-qwen.txt      # CUDA 12.x PyTorch, transformers 4.57.1, accelerate, bitsandbytes
@@ -116,6 +116,8 @@ Only one model is kept in GPU memory at a time. A hosted provider (Hugging Face 
 
 ## Patient flow
 
+The live target counter includes complete, assessable repetitions with a rounded reference-match score of at least 60%, capped at the assigned target. This progress count is separate from strictly correct repetitions. The summary reports all observed repetitions and how many fully met the reference tolerances. It requires a stable start, visible shoulders/knees/ankles, a complete return, and reference-relative range, timing and alignment checks. An isolated missed frame is tolerated; sustained tracking loss interrupts the current attempt. Final analysis stores observed cycles separately from `accepted_repetitions`; missing comparison features cannot count as a match. Upload-analysis percentage is shown separately from the repetition counter, including on failure. Sound alerts play two short tones for sustained differences or a rejected repetition during live recording and uploaded-video analysis, with a six-second cooldown, a mute button and a Test sound button. Sound requires browser audio support and is unlocked by an explicit button press. These are approximate reference comparisons, not clinical correctness labels.
+
 1. Click **Start exercise** and watch the actual therapist demonstration with its tracked skeleton.
 2. Confirm permission, then select **Use camera**, **Upload video**, or the provided patient sample on this laptop.
 3. Camera mode gives a live skeleton and provisional repetition counter. The top pause control pauses/resumes the recording and its timer. Click **Finish set** for the final analysis. Uploaded clips are analysed in the browser with progress shown.
@@ -124,6 +126,8 @@ Only one model is kept in GPU memory at a time. A hosted provider (Hugging Face 
 6. **View full report** provides real source clips, measurements, clinician feedback and HTML/ZIP downloads. Its movement-analysis section includes time to peak and return, within-set timing/excursion variation, per-feature curves and differences from the reference tolerance. Feature comparison is withheld below 70% overall tracking coverage and when an individual feature is not visible reliably. The clinician workspace can confirm/dismiss findings, add comments and return feedback.
 
 Camera permission and a secure context are required (`localhost` works). Camera recording supports browser-supported WebM/MP4 and is normalised before final analysis so the report timestamps match the recorded video. The final count may differ from the provisional live count. Limit: 3 minutes / 300 MB.
+
+The post-workout evaluation opens as a separate page after **Finish Session**. Use **Continue exercises** to add more completed recordings before evaluating. Pain, effort, instability, swelling and notes describe the whole workout; one evaluation is linked to every included patient recording with an explicit workout scope. It is no longer embedded in individual exercise results. Pending workout recording IDs survive navigation and refresh in the current tab until answers are saved.
 
 ## Motion assessment
 

@@ -1,7 +1,15 @@
 from wathba.assessment import assess
 from wathba.motion import Plan
-from wathba.scoring import reference_match
+from wathba.scoring import reference_match, counted_repetitions
 from test_assessment import recording, reference
+
+
+def test_progress_includes_60_percent_but_does_not_imply_correctness():
+    cycles = [{"rep": i, "comparison_assessable": i != 4, "accepted": False} for i in range(1, 6)]
+    score = {"per_repetition": [{"rep": 1, "value": 59}, {"rep": 2, "value": 60},
+                                 {"rep": 3, "value": 61}, {"rep": 4, "value": 99}]}
+    assert counted_repetitions(cycles, score) == 2
+    assert counted_repetitions(cycles, {}) == 0
 
 
 def test_same_reference_scores_high_and_pattern_difference_scores_lower():

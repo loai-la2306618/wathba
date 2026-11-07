@@ -1,6 +1,7 @@
 """A shared demo workspace. IDs are server generated, and writes are atomic."""
 
 import json
+import math
 import os
 import re
 import threading
@@ -29,11 +30,25 @@ def new_folder():
     return session_id, path
 
 
+def json_safe(value):
+    """Missing joints are NaN in memory. JSON has no NaN, so they are stored as null."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {k: json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_safe(v) for v in value]
+    return value
+
+
+_SESSIONS = {}
+
+
 def save(session):
     with LOCK:
         path = folder(session["id"]) / "report.json"
         tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(session, ensure_ascii=False, indent=2, allow_nan=False))
+        tmp.write_text(json.dumps(json_safe(session), ensure_ascii=False, indent=2, allow_nan=False), encoding='utf-8')
         tmp.replace(path)
         from .reporting import write_report
         write_report(session, path.parent)
@@ -44,20 +59,28 @@ def load(session_id):
     with LOCK:
         from . import remote
         if remote.enabled():remote.ensure(f"{session_id}/report.json",check=True)
-        data=json.loads((folder(session_id) / "report.json").read_text())
+        data=json.loads((folder(session_id) / "report.json").read_text(encoding='utf-8'))
         return remote.rebase(data) if remote.enabled() else data
 
 
 def sessions():
     from . import remote
     remote.refresh_reports()
-    result = []
+    result, seen = [], set()
     for path in root().glob("*/report.json"):
         try:
-            session = json.loads(path.read_text())
-            result.append(remote.rebase(session) if remote.enabled() else session)
+            info = path.stat()
+            stamp = (info.st_mtime_ns, info.st_size)
+            cached = _SESSIONS.get(path)
+            if cached is None or cached[0] != stamp:  # Only changed reports are parsed again.
+                session = json.loads(path.read_text(encoding='utf-8'))
+                cached = _SESSIONS[path] = (stamp, remote.rebase(session) if remote.enabled() else session)
+            seen.add(path)
+            result.append(dict(cached[1]))
         except (ValueError, OSError):
             continue
+    for path in set(_SESSIONS) - seen:
+        _SESSIONS.pop(path, None)
     return sorted(result, key=lambda s: s["created_at"], reverse=True)
 
 
@@ -94,12 +117,14 @@ def attention_reasons(answers):
     return reasons
 
 
-def check_in(session_id, answers):
+def check_in(session_id, answers, *, workout=None):
     """Store the patient's post-exercise answers with the session (replacing earlier answers)."""
     from datetime import UTC, datetime
     with LOCK:
         session = load(session_id)
         record = {**answers, "submitted_at": datetime.now(UTC).isoformat()}
+        if workout:
+            record.update(scope="workout", workout_id=workout["id"], session_ids=workout["session_ids"])
         record["attention"] = attention_reasons(record)
         session["patient_check_in"] = record
         # Existing report fields keep working for older readers.
@@ -109,19 +134,30 @@ def check_in(session_id, answers):
     return session
 
 
+def workout_check_in(session_ids, answers):
+    """One whole-workout self-report, linked to each included exercise recording."""
+    with LOCK:
+        ids = list(dict.fromkeys(session_ids))
+        sessions_to_update = [load(sid) for sid in ids]
+        if any(s.get("kind") == "reference" for s in sessions_to_update):
+            raise ValueError("Therapist references cannot be included in a workout evaluation.")
+        workout = {"id": uuid.uuid4().hex, "session_ids": ids}
+        return [check_in(sid, answers, workout=workout) for sid in ids]
+
+
 def load_plan():
     from .motion import Plan
     path = root() / "plan.json"
     from . import remote
     if remote.enabled():remote.ensure("plan.json",refresh=True)
-    return Plan(**json.loads(path.read_text())) if path.exists() else Plan()
+    return Plan(**json.loads(path.read_text(encoding='utf-8'))) if path.exists() else Plan()
 
 
 def save_plan(plan):
     with LOCK:
         path = root() / "plan.json"
         tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(plan.dict()))
+        tmp.write_text(json.dumps(plan.dict()), encoding='utf-8')
         tmp.replace(path)
         from . import remote
         remote.persist_file(path)
@@ -131,7 +167,7 @@ def references():
     items = []
     for path in root().glob("*/motion-model.json"):
         try:
-            model = json.loads(path.read_text())
+            model = json.loads(path.read_text(encoding='utf-8'))
             items.append(model)
         except (ValueError, OSError):
             continue
@@ -142,7 +178,7 @@ def save_reference(model):
     path = folder(model["reference_session_id"]) / "motion-model.json"
     with LOCK:
         tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(model, ensure_ascii=False, indent=2, allow_nan=False))
+        tmp.write_text(json.dumps(model, ensure_ascii=False, indent=2, allow_nan=False), encoding='utf-8')
         tmp.replace(path)
     return str(path)
 
@@ -151,4 +187,4 @@ def load_reference(session_id):
     folder(session_id)
     from . import remote
     if remote.enabled():remote.ensure(f"{session_id}/motion-model.json")
-    return json.loads((folder(session_id) / "motion-model.json").read_text())
+    return json.loads((folder(session_id) / "motion-model.json").read_text(encoding='utf-8'))

@@ -225,10 +225,10 @@ def build_app():
     assignment_path = storage.root() / "assignment.json"
     if not assignment_path.exists():
         assigned = replace(storage.load_plan(), reference_id=default_model["reference_session_id"], allow_illustrative_reference=True)
-        assignment_path.write_text(json.dumps(assigned.dict()))
+        assignment_path.write_text(json.dumps(assigned.dict()), encoding='utf-8')
 
     def assignment():
-        return Plan(**json.loads(assignment_path.read_text()))
+        return Plan(**json.loads(assignment_path.read_text(encoding='utf-8')))
 
     plan = assignment()
     cover_path = storage.root() / "exercise-cover.jpg"
@@ -295,7 +295,7 @@ def build_app():
             if m["exercise"] != exercise or m["side"] != side or m["view"] != view or m["primary_feature"] != feature:
                 raise gr.Error("Choose a reference matching the exercise, leg and camera view.")
         p = replace(p, target_repetitions=int(target))
-        assignment_path.write_text(json.dumps(p.dict()))
+        assignment_path.write_text(json.dumps(p.dict()), encoding='utf-8')
         guide_path = assigned_guide()
         updated_cover = storage.root() / f"{p.reference_id or p.view}-cover.jpg"
         cap = cv2.VideoCapture(guide_path)
@@ -341,7 +341,7 @@ def build_app():
                     upload = gr.Video(label="Upload your exercise video", sources=["upload"], include_audio=False, height=290)
                     camera = gr.Video(label="Record with your camera", sources=["webcam"], include_audio=False, height=290, visible=False)
                     demo_clip_path = storage.root() / "demo-recording.json"
-                    clip_config = json.loads(demo_clip_path.read_text()) if demo_clip_path.exists() else {}
+                    clip_config = json.loads(demo_clip_path.read_text(encoding='utf-8')) if demo_clip_path.exists() else {}
                     provided_clip = gr.Button("Use your provided squat video", visible=plan.exercise == "Squat" and bool(clip_config.get("path")), size="sm")
             gr.HTML('<p class="record-hint">Keep your whole body in view and the camera steady. Up to 3 minutes / 300 MB.</p>')
             with gr.Accordion("Add a note (optional)", open=False):

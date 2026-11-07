@@ -1,5 +1,6 @@
 """Patient workout frontend with browser pose tracking (YOLOv8n-pose + MoveNet) and a server ViTPose check."""
 
+import gzip
 import json
 import mimetypes
 import os
@@ -12,7 +13,8 @@ import uuid
 import cv2
 import imageio_ffmpeg
 from fastapi import FastAPI, File, HTTPException, UploadFile, Request
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from typing import Literal
 
@@ -25,6 +27,8 @@ from .pose_schema import LEGACY_MEDIAPIPE_ENGINE, MODELS, PIPELINE, replay_rows,
 from .media import configure_ffmpeg, open_video
 from .reporting import bundle
 from .analysis import session_analysis
+from .assessment import cycle_matches_reference
+from .scoring import counted_repetitions
 
 BASE = Path(__file__).resolve().parents[1]
 LOCK = threading.Lock()
@@ -57,7 +61,7 @@ def _reference_pointer(exercise):
     if not p.exists():
         return None
     try:
-        return json.loads(p.read_text()).get('id')
+        return json.loads(p.read_text(encoding='utf-8')).get('id')
     except (OSError, ValueError):
         return None
 
@@ -88,7 +92,8 @@ def legacy_reference_source(exercise="squat"):
 
 
 def prepare_library():
-    folder=Path(os.getenv('WATHBA_LIBRARY_DIR',str(Path.home()/'Downloads/excercise videos')))
+    bundled=Path(__file__).resolve().parents[1]/'demo-media'  # Clips shipped with the deployed demo.
+    folder=Path(os.getenv('WATHBA_LIBRARY_DIR') or (bundled if bundled.is_dir() else Path.home()/'Downloads/excercise videos'))
     out=storage.root()/'library';out.mkdir(exist_ok=True)
     for role, rel in [('therapist','therapist/WhatsApp Video 2026-11-05 at 22.44.19.mp4'),('patient','patient/WhatsApp Video 2026-11-05 at 22.44.18.mp4'),('therapist-jump','therapist/WhatsApp Video 2026-11-05 at 22.44.20.mp4'),('patient-jump','patient/WhatsApp Video 2026-11-05 at 22.44.23.mp4')]:
         source=folder/rel;target=out/(f'{role}.mp4' if role.endswith('-jump') else f'{role}-squat.mp4')
@@ -99,14 +104,62 @@ def prepare_library():
     return out
 
 
+def seed_reference(library):
+    """Hosted disks are wiped on restart, so rebuild the squat reference from its saved tracking."""
+    rows=Path(__file__).resolve().parents[1]/'demo-media/therapist-squat.rows.json'
+    source=library/'therapist-squat.mp4'
+    if reference_id('squat') or not rows.is_file() or not source.is_file():
+        return
+    try:
+        s=process_browser_video(source,json.loads(rows.read_text(encoding='utf-8')),None,True,'Therapist squat demonstration',exercise='squat')
+        target=storage.root()/'browser-reference.json'
+        temporary=target.with_suffix('.tmp')
+        temporary.write_text(json.dumps({'id':s['id']}), encoding='utf-8')
+        temporary.replace(target)
+    except Exception as exc:  # The app must still start; a reference can be prepared from the browser.
+        print(f'Could not rebuild the therapist reference: {exc}',flush=True)
+
+
+def session_response(request, session, **headers):
+    """Session JSON is mostly repetitive landmarks, so compress it for phones."""
+    response=JSONResponse(public_session(session),headers=headers)
+    if len(response.body)>1024 and 'gzip' in request.headers.get('accept-encoding',''):
+        response.body=gzip.compress(response.body,1)
+        response.headers.update({'content-encoding':'gzip','content-length':str(len(response.body)),'vary':'Accept-Encoding'})
+    return response
+
+
+def known_reference(value):
+    """False for an id from before a restart, which a tab left open can still send."""
+    try:
+        return bool(value and storage.load_reference(value))
+    except (OSError,ValueError,TypeError):
+        return False
+
+
+def reference_locked():
+    return os.getenv('WATHBA_LOCK_REFERENCE')=='1'
+
+
 def public_session(s):
     ref_source=None
+    cycles=s['cycles']
+    # Earlier saved reports predate the explicit accepted count. Evaluate their
+    # existing cycles against their original reference rather than returning 0.
+    if 'accepted_repetitions' not in s and s.get('reference_model'):
+        try:
+            reference=storage.load_reference(s['plan']['reference_id'])
+            cycles=[{**c,'accepted':cycle_matches_reference(c,s['samples'],reference,s['coverage'],s['plan']['primary_feature']),
+                     'comparison_assessable':cycle_matches_reference({**c,'findings':[]},s['samples'],reference,s['coverage'],s['plan']['primary_feature'])} for c in cycles]
+        except (OSError,ValueError,KeyError):pass
     if s['plan'].get('reference_id'):
         try:ref_source=media_url(storage.load(s['plan']['reference_id'])['source_video'])
         except (OSError,ValueError):pass
     return {'id':s['id'],'exercise':s['exercise'],'side':s['plan']['side'],'view':s['plan']['view'],
             'target':s['plan']['target_repetitions'],'repetitions':s['repetitions'],'duration':s['duration'],
-            'created_at':s['created_at'],'coverage':s['coverage'],'match_score':s.get('match_score',{}),'cycles':s['cycles'],
+            'accepted_repetitions':s.get('accepted_repetitions',sum(c.get('accepted') is True for c in cycles)),
+            'counted_repetitions':s.get('counted_repetitions',counted_repetitions(cycles,s.get('match_score',{}))),
+            'created_at':s['created_at'],'coverage':s['coverage'],'match_score':s.get('match_score',{}),'cycles':cycles,
             'model':s['model'],'source':media_url(s['source_video']),'annotated':media_url(s['annotated_video']),
             'feedback':s['feedback'],'flags':[{**f,'clip':media_url(f['clip']),**{k:media_url(f[k]) for k in ('picture','reference_picture') if f.get(k)}} for f in s['flags']],
             'motion_analysis':session_analysis(s),'reference':s.get('reference_model'),'reference_source':ref_source,'report':media_url(storage.folder(s['id'])/'physio-report.html'),
@@ -135,6 +188,10 @@ class FeedbackRequest(BaseModel):
     text: str = Field(max_length=5000)
 
 
+class WorkoutCheckInRequest(CheckInRequest):
+    session_ids: list[str] = Field(min_length=1, max_length=50)
+
+
 class AiRequest(BaseModel):
     consent: bool = False
     lang: Literal['en','ar'] = 'en'
@@ -157,6 +214,7 @@ class TrackingRequest(BaseModel):
 def create_app():
     configure_ffmpeg()
     library=prepare_library()
+    seed_reference(library)
     app=FastAPI(title='Wathba',docs_url=None,redoc_url=None)
     # Cross-origin isolation lets ONNX Runtime Web use multi-threaded WebAssembly
     # (SharedArrayBuffer). All app resources are same-origin. Remote-storage mode
@@ -193,14 +251,14 @@ def create_app():
             cap=cv2.VideoCapture(str(teacher));cap.set(cv2.CAP_PROP_POS_MSEC,1500);ok,frame=cap.read();cap.release()
             if ok:cv2.imwrite(str(poster),frame)
         return {'exercise':'Squat' if exercise=='squat' else 'Jump','exerciseId':exercise,'comparisonAvailable':bool(m),'side':'Left','view':'Front','target':storage.load_plan().target_repetitions,'model':'YOLOv8n-pose + MoveNet SinglePose Lightning (browser)',
-                'referenceAsset':'legacy-reference' if legacy else 'therapist','referenceNeedsRefit':bool(legacy),
+                'referenceAsset':'legacy-reference' if legacy else 'therapist','referenceNeedsRefit':bool(legacy),'referenceLocked':reference_locked(),
                 'pose':{'pipeline':PIPELINE,'maxHz':env_number('WATHBA_POSE_MAX_HZ',15,2,30),'reacquireSeconds':env_number('WATHBA_POSE_REACQUIRE_SECONDS',1,.25,10),
                         'models':{k:{f:v[f] for f in ('label','role','runtime','license')} for k,v in MODELS.items()},
                         'vitpose':dict(zip(('available','reason'),vitpose_service.available()))},
                 'ai':ai_coach.status(),
                 'referenceId':ref,'referenceModel':m,'referenceUrl':media_url(teacher) if teacher.exists() or (remote.enabled() and remote.exists(teacher)) else None,
                 'sampleUrl':media_url(library/f'patient-{exercise}.mp4') if (library/f'patient-{exercise}.mp4').exists() or (remote.enabled() and remote.exists(library/f'patient-{exercise}.mp4')) else None,
-                'maxUploadMb':int(os.getenv('WATHBA_MAX_UPLOAD_MB','300')),'maxRecordingSeconds':int(os.getenv('WATHBA_MAX_RECORDING_SECONDS','180')),'cameraBitrate':int(os.getenv('WATHBA_CAMERA_BITRATE','2500000')),
+                'maxUploadMb':int(os.getenv('WATHBA_MAX_UPLOAD_MB','300')),'maxRecordingSeconds':int(os.getenv('WATHBA_MAX_RECORDING_SECONDS','180')),'cameraBitrate':int(os.getenv('WATHBA_CAMERA_BITRATE','1500000')),
                 'poster':media_url(poster) if poster.exists() else None}
 
     @app.post('/api/upload')
@@ -219,9 +277,10 @@ def create_app():
         target=folder/'source.mp4'
         try:
             # Normalise webcam WebM metadata and phone orientation before tracking.
-            subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(),'-y','-loglevel','error','-i',str(raw),'-t','181',
-                            '-an','-vf','scale=trunc(iw/2)*2:trunc(ih/2)*2','-c:v','libx264','-preset','veryfast',
-                            '-pix_fmt','yuv420p','-movflags','+faststart',str(target)],check=True,capture_output=True,timeout=120)
+            await run_in_threadpool(subprocess.run,[imageio_ffmpeg.get_ffmpeg_exe(),'-y','-loglevel','error','-i',str(raw),'-t','181','-an',
+                            '-vf',"scale='min(854,iw)':'min(854,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
+                            '-c:v','libx264','-preset','ultrafast','-crf','26','-pix_fmt','yuv420p','-movflags','+faststart',str(target)],
+                            check=True,capture_output=True,timeout=120)
             cap,_,duration=open_video(target);cap.release()
         except (ValueError,subprocess.SubprocessError) as exc:
             target.unlink(missing_ok=True);raise HTTPException(400,'Could not read the recording. Use an MP4/MOV or a camera recording under three minutes.') from exc
@@ -230,8 +289,9 @@ def create_app():
         return {'asset':upload_id,'url':media_url(target),'duration':duration}
 
     @app.post('/api/process')
-    def process(request: TrackingRequest):
+    def process(request: TrackingRequest, http: Request):
         if not request.consent:raise HTTPException(400,'Confirm permission to analyse this recording.')
+        if request.reference and reference_locked():raise HTTPException(403,'The therapist reference is locked on this public demo.')
         if request.asset in ('therapist','patient'):
             source=library/f'{request.asset}-{request.exercise}.mp4'
             if request.reference != (request.asset=='therapist'):raise HTTPException(400,'Reference and patient sources must be separate.')
@@ -246,25 +306,27 @@ def create_app():
         if not source.exists():raise HTTPException(404,'Recording not found. Upload it again.')
         with LOCK:
             try:
-                ref=None if request.reference else request.reference_id or reference_id(request.exercise)
+                requested=request.reference_id if known_reference(request.reference_id) else None
+                ref=None if request.reference else requested or reference_id(request.exercise)
                 if not request.reference and not ref and request.exercise=='squat':raise ValueError('Prepare the therapist reference before analysing the patient.')
                 s=process_browser_video(source,request.rows,ref,request.reference,
                                         f'Therapist {request.exercise} demonstration' if request.reference else f'Patient {request.exercise} session', exercise=request.exercise)
                 if request.reference:
                     target=storage.root()/('browser-reference.json' if request.exercise=='squat' else 'browser-reference-jump.json')
                     temporary=target.with_suffix('.tmp')
-                    temporary.write_text(json.dumps({'id':s['id']}))
+                    temporary.write_text(json.dumps({'id':s['id']}), encoding='utf-8')
                     temporary.replace(target)
                     remote.persist_session(s['id']);remote.persist_file(target)
                     return {'id':s['id'],'model':storage.load_reference(s['id'])}
                 remote.persist_session(s['id'])
-                return public_session(s)
+                return session_response(http,s)
             except ValueError as exc:raise HTTPException(400,str(exc)) from exc
 
     @app.get('/api/session/{session_id}')
-    def session(session_id:str):
-        try:return public_session(storage.load(session_id))
+    def session(session_id:str, http: Request):
+        try:s=storage.load(session_id)
         except (OSError,ValueError):raise HTTPException(404,'Session not found.')
+        return session_response(http,s,**({'cache-control':'private, max-age=86400'} if s.get('kind')=='reference' else {}))
 
     @app.post('/api/program')
     def update_program(request: ProgramRequest):
@@ -280,6 +342,17 @@ def create_app():
             remote.persist_session(session_id)
             return public_session(s)
         except (OSError,ValueError):raise HTTPException(404,'Session not found.')
+
+    @app.post('/api/workout/check-in')
+    def update_workout_check_in(request: WorkoutCheckInRequest):
+        answers=request.model_dump(exclude={'session_ids'})
+        answers.update(pain_locations=list(dict.fromkeys(request.pain_locations)),notes=request.notes.strip())
+        try:
+            sessions=storage.workout_check_in(request.session_ids,answers)
+        except (OSError,ValueError) as exc:
+            raise HTTPException(400,'All workout recordings must exist and belong to patient exercises.') from exc
+        for session in sessions:remote.persist_session(session['id'])
+        return {'session_ids':[s['id'] for s in sessions],'check_in':sessions[-1]['patient_check_in']}
 
     @app.post('/api/session/{session_id}/feedback')
     def update_feedback(session_id:str,request: FeedbackRequest):
@@ -387,7 +460,8 @@ def create_app():
                 if url:return RedirectResponse(url)
                 target=remote.ensure(relative)
             if not target.is_file():raise FileNotFoundError()
-            return FileResponse(target)
+            # Saved videos and pictures never change, so a browser can keep them.
+            return FileResponse(target,headers={'Cache-Control':'private, max-age=86400'} if target.suffix in ('.mp4','.jpg') else None)
         except (OSError,ValueError):raise HTTPException(404,'Media not found.')
 
     app.mount('/static',StaticFiles(directory=BASE/'web'),name='static')

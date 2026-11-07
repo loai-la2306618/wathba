@@ -36,7 +36,8 @@ def check_in_html(s):
     alert = (f'<p class="alert"><b>Needs attention:</b> the patient reported {", ".join(ATTENTION_TEXT[a] for a in attention)}. '
              'Self-reported; review before the next session.</p>') if attention else ""
     table = "".join(f"<tr><th>{escape(k)}</th><td>{escape(v)}</td></tr>" for k, v in rows)
-    return f"<h2>How the patient felt</h2>{alert}<table class='answers'><tbody>{table}</tbody></table>"
+    scope = f"<p>Whole-workout evaluation covering {len(ci.get('session_ids', []))} exercise recordings.</p>" if ci.get("scope") == "workout" else ""
+    return f"<h2>How the patient felt</h2>{scope}{alert}<table class='answers'><tbody>{table}</tbody></table>"
 
 
 def arabic_check_in(s):
