@@ -231,6 +231,9 @@ def create_app():
         if request.url.path.startswith('/vendor/') and response.status_code==200:
             # Runtime and weights are pinned by SHA256 (assets/vendor/manifest.json); cache for a week.
             response.headers['Cache-Control']='public, max-age=604800'
+        elif request.url.path=='/' or request.url.path.startswith('/static/'):
+            # Check for a newer page and scripts on every visit, so a deploy reaches phones at once.
+            response.headers['Cache-Control']='no-cache'
         return response
 
     @app.get('/')
