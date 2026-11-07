@@ -122,3 +122,5 @@ body.camera-full #input-actions{display:none}
 body.camera-full .exercise-options{margin:0 0 8px}
 #rep-count-status{margin:6px 0 10px;text-align:center;font-size:12px;line-height:1.5}
 body.camera-full #rep-count-status{color:#fff}
+/* Desktop: the phone frame keeps its size and its content scrolls inside it. Phones use the whole screen and scroll normally. */
+@media(min-width:481px){body{height:100svh;overflow:hidden;display:flow-root}.app-shell{height:calc(100svh - 36px);min-height:0;overflow:hidden;display:flex;flex-direction:column}main{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#ffffff40 transparent}main::-webkit-scrollbar{width:7px}main::-webkit-scrollbar-thumb{background:#ffffff40;border-radius:7px}body.camera-full main{overflow:visible}}

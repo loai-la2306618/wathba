@@ -51,7 +51,8 @@ function toast(message){
 $('toast').addEventListener('click',hideToast);
 for(const [event,ms] of [['mouseenter',null],['focusin',null],['mouseleave',3000],['focusout',3000]])$('toast').addEventListener(event,()=>ms?(!$('toast').hidden&&scheduleToastHide(ms)):clearTimeout(toastTimer));
 document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!$('toast').hidden&&!document.querySelector('dialog[open]'))hideToast();});
-function page(name){for(const el of document.querySelectorAll('.page'))el.hidden=el.id!==name;document.body.classList.toggle('work-mode',name==='work');window.scrollTo(0,0);cancelAnimationFrame(referenceHandle);if(name==='work')referenceHandle=requestAnimationFrame(paintReference);if(name!=='work'){motion.pause();mini.pause();cancelAnimationFrame(paintHandle);}window.dispatchEvent(new CustomEvent('wathba:page',{detail:name}));}
+function resetScroll(){window.scrollTo(0,0);document.querySelector('main')?.scrollTo(0,0);}
+function page(name){for(const el of document.querySelectorAll('.page'))el.hidden=el.id!==name;document.body.classList.toggle('work-mode',name==='work');resetScroll();cancelAnimationFrame(referenceHandle);if(name==='work')referenceHandle=requestAnimationFrame(paintReference);if(name!=='work'){motion.pause();mini.pause();cancelAnimationFrame(paintHandle);}window.dispatchEvent(new CustomEvent('wathba:page',{detail:name}));}
 function busy(title,text='',value=0){$('busy').hidden=false;$('busy-title').textContent=title;$('busy-text').textContent=text;$('busy-progress').value=value;}
 function hideBusy(){$('busy').hidden=true;}
 async function api(url,options){const r=await fetch(url,options);if(!r.ok){let v=await r.json().catch(()=>({detail:r.statusText}));throw Error(typeof v.detail==='string'?v.detail:'The recording could not be processed. Please try again.');}return r.json();}
@@ -148,7 +149,7 @@ async function ensureReference(job){if(state.config.referenceId){if(state.refere
 // Camera and live recording fill the screen (and use browser fullscreen where allowed).
 let dockObserver;
 function setCameraFull(on){
- if(on&&!document.body.classList.contains('camera-full'))window.scrollTo(0,0);
+ if(on&&!document.body.classList.contains('camera-full'))resetScroll();
  document.body.classList.toggle('camera-full',on);
  if(on)document.querySelector('.work-dock').prepend(soundControls);
  else $('stage').before(soundControls);
