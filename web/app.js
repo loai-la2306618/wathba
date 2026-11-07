@@ -278,29 +278,11 @@ function bindEvidence(s){const select=$('evidence-rep');if(!select)return;select
  $('evidence-replay').onclick=safe(()=>openReplay(r.start));
  };select.onchange();}
 const FEATURE_LABELS={knee_angle:'Left knee angle (2D, deg)',hip_angle:'Left hip angle (2D, deg)',torso_lean:'Trunk lean (2D, deg)',knee_offset:'Left knee offset (leg lengths)',hip_height:'Hip height (torso lengths, per frame)'};
-function vitposeMarkup(check){
- if(!check)return '';const fmt=v=>v===null||v===undefined?'—':Math.abs(v)>=10?v.toFixed(1):v.toFixed(3);
- const rows=Object.entries(check.summary).map(([k,v])=>`<tr><td>${esc(FEATURE_LABELS[k]||k)}</td><td>${v.compared}</td><td>${fmt(v.median_abs_difference)}</td></tr>`).join('');
- const frames=check.checkpoints.map(c=>`<tr><td>${c.rep??'—'} · ${esc(c.phase)}</td><td>${c.time.toFixed(2)}s</td><td>${fmt(c.browser.features.knee_offset)} / ${fmt(c.vitpose.features.knee_offset)}</td><td>${fmt(c.browser.features.torso_lean)} / ${fmt(c.vitpose.features.torso_lean)}</td></tr>`).join('');
- return `<p>${check.checkpoints.length} frames checked with ${esc(check.repository)} on the person boxes chosen by the browser tracker (${esc(MODELS[check.browser_model]?.label||'browser model')}).</p><div class="table-wrap"><table><thead><tr><th>Measurement</th><th>Frames</th><th>Median |difference|</th></tr></thead><tbody>${rows}</tbody></table></div><details><summary>Per-frame values (browser / ViTPose)</summary><div class="table-wrap"><table><thead><tr><th>Rep · phase</th><th>Time</th><th>Knee offset</th><th>Trunk lean</th></tr></thead><tbody>${frames}</tbody></table></div></details><p>${esc(check.note)}</p>`;
-}
 function poseModelsMarkup(s){
- const legacy=s.pose_engine==='mediapipe-pose-landmarker-full';
- const vit=state.config?.pose?.vitpose,check=s.model_checks?.vitpose;
  const unavailable=(s.unavailable_measurements||[]).map(m=>`<li><b>${esc(m.label)}</b>: ${esc(m.reason)}</li>`).join('');
- const action=legacy?'<p>This session was recorded with the previous MediaPipe engine; a ViTPose check needs a session tracked with the current engine.</p>'
-  :vit?.available?`<label class="consent"><input id="vitpose-consent" type="checkbox">Re-analyse selected frames of this already uploaded recording on the Wathba server. No third-party service is used.</label><button id="vitpose-run" class="secondary">${check?'Run the ViTPose check again':'Run ViTPose check'}</button>`
-  :`<p>ViTPose check unavailable on this server: ${esc(vit?.reason||'not configured')}</p>`;
- return `<div class="report-section" id="pose-models"><h2>Pose models</h2><p>${esc(s.model)}. Joints are 2D image-plane estimates (17 COCO keypoints); angles change with camera position.</p>${unavailable?`<p>Not measured with these models:</p><ul class="unavailable-list">${unavailable}</ul>`:''}<h3>ViTPose frame check</h3><div id="vitpose-result">${vitposeMarkup(check)}</div>${action}</div>`;
+ return `<div class="report-section" id="pose-models"><h2>Pose models</h2><p>${esc(s.model)}. Joints are 2D image-plane estimates (17 COCO keypoints); angles change with camera position.</p>${unavailable?`<p>Not measured with these models:</p><ul class="unavailable-list">${unavailable}</ul>`:''}</div>`;
 }
-function bindPoseModels(s){
- const run=$('vitpose-run');if(!run)return;
- run.onclick=safe(async()=>{
-  if(!$('vitpose-consent').checked)throw Error('Confirm that this recording may be re-analysed on the Wathba server.');
-  run.disabled=true;busy('Checking selected frames with ViTPose','Running on the Wathba server with the tracked person boxes. The first run downloads the model.');
-  try{const check=await post(`/api/session/${s.id}/vitpose-check`,{consent:true});s.model_checks={...(s.model_checks||{}),vitpose:check};$('vitpose-result').innerHTML=vitposeMarkup(check);}finally{hideBusy();run.disabled=false;}
- });
-}
+function bindPoseModels(s){}
 // ------------------------------------------------------------- post-exercise check-in
 const LOCATIONS=[['knee','Knee'],['hip','Hip'],['back','Lower back'],['ankle','Ankle'],['other','Other']];
 const DIFFICULTY=[['easy','Easy'],['moderate','Moderate'],['hard','Hard']];
@@ -372,12 +354,6 @@ function aiSection(s){
  <div id="ai-thread">${qs.map(aiAnswerHtml).join('')}</div>
  <form id="ai-ask" class="ai-ask"><input name="question" maxlength="500" autocomplete="off" placeholder="For example: how many repetitions did I do?" aria-label="Your question"><button class="primary" type="submit">Ask</button></form></div>`;
 }
-function visionSection(s){
- const vision=state.config?.ai?.vision,review=s.ai?.vision;
- if(!vision?.available)return '';
- const body=review?(review.checked?`<p class="ai-text" data-no-i18n dir="auto">${esc(review.text)}</p><small class="ai-meta">${esc(review.stats?.repo||'Qwen3-VL')} · ${review.frame_times.length} frames</small>`:`<p class="subtle">The description did not pass the automatic checks, so it is not shown.</p>`):'';
- return `<div class="report-section"><h2>Vision model review</h2><p>Experimental: a Qwen3-VL model describes the start and bottom of your first repetitions. It does not change your score.</p><div id="ai-vision">${body}</div><button id="ai-vision-run" class="secondary" type="button">Describe the frames</button></div>`;
-}
 function bindAi(s){
  const consent=()=>{if(!$('ai-consent')?.checked)throw Error('Confirm that this session may be processed by the Qwen3 model on the Wathba server.');return true;};
  const store=(kind,result)=>{s.ai??={};if(kind==='summary')(s.ai.summary??={})[result.lang]=result;else if(kind==='question')s.ai.questions=[...(s.ai.questions||[]),result];else s.ai.vision=result;};
@@ -387,10 +363,6 @@ function bindAi(s){
   const button=$('ai-ask').querySelector('button');button.disabled=true;$('ai-thread').insertAdjacentHTML('beforeend','<p class="subtle ai-wait">Thinking…</p>');
   try{const r=await post(`/api/session/${s.id}/ai/ask`,{consent:true,lang:currentLang(),question});store('question',r);input.value='';$('ai-thread').insertAdjacentHTML('beforeend',aiAnswerHtml(r));}
   finally{button.disabled=false;$('ai-thread').querySelector('.ai-wait')?.remove();}});
- if($('ai-vision-run'))$('ai-vision-run').onclick=safe(async()=>{
-  if(!$('ai-consent')?.checked)throw Error('Confirm that this session may be processed by the Qwen3 model on the Wathba server.');
-  busy('Describing the frames','The Qwen3-VL model is looking at your repetitions on the Wathba server. The first run loads the model.');
-  try{const r=await post(`/api/session/${s.id}/ai/vision`,{consent:true,lang:currentLang()});store('vision',r);$('ai-vision').innerHTML=r.checked?`<p class="ai-text" data-no-i18n dir="auto">${esc(r.text)}</p><small class="ai-meta">${esc(r.stats?.repo||'Qwen3-VL')} · ${r.frame_times.length} frames</small>`:'<p class="subtle">The description did not pass the automatic checks, so it is not shown.</p>';}finally{hideBusy();}});
 }
 // ---------------------------------------------------------------------- report
 function showReport(){const s=state.session;page('report');
@@ -406,7 +378,6 @@ function showReport(){const s=state.session;page('report');
   <h3>Annotated recording</h3><video controls playsinline src="${esc(s.annotated)}"></video>
   ${evidenceMarkup(s)}
   <div class="report-section"><h2>Repetition detail</h2><div class="table-wrap"><table><thead><tr><th>Rep</th><th>Interval</th><th>Duration</th><th>Excursion*</th><th>Match</th></tr></thead><tbody>${reps}</tbody></table></div><p>*Frontal pelvic movement relative to torso length, measured in the 2D image plane; not calibrated clinical knee range.</p></div>
-  ${visionSection(s)}
   ${poseModelsMarkup(s)}
   <div class="report-section"><h2>How to interpret this</h2><p>${esc(s.match_score.reason||'No comparison score was available.')}</p>${s.limitations.map(l=>`<p>${esc(l)}</p>`).join('')}</div>
  </details>`;
