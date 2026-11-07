@@ -41,6 +41,9 @@ def json_safe(value):
     return value
 
 
+_SESSIONS = {}
+
+
 def save(session):
     with LOCK:
         path = folder(session["id"]) / "report.json"
@@ -63,13 +66,21 @@ def load(session_id):
 def sessions():
     from . import remote
     remote.refresh_reports()
-    result = []
+    result, seen = [], set()
     for path in root().glob("*/report.json"):
         try:
-            session = json.loads(path.read_text(encoding='utf-8'))
-            result.append(remote.rebase(session) if remote.enabled() else session)
+            info = path.stat()
+            stamp = (info.st_mtime_ns, info.st_size)
+            cached = _SESSIONS.get(path)
+            if cached is None or cached[0] != stamp:  # Only changed reports are parsed again.
+                session = json.loads(path.read_text(encoding='utf-8'))
+                cached = _SESSIONS[path] = (stamp, remote.rebase(session) if remote.enabled() else session)
+            seen.add(path)
+            result.append(dict(cached[1]))
         except (ValueError, OSError):
             continue
+    for path in set(_SESSIONS) - seen:
+        _SESSIONS.pop(path, None)
     return sorted(result, key=lambda s: s["created_at"], reverse=True)
 
 

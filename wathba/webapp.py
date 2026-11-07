@@ -1,5 +1,6 @@
 """Patient workout frontend with browser pose tracking (YOLOv8n-pose + MoveNet) and a server ViTPose check."""
 
+import gzip
 import json
 import mimetypes
 import os
@@ -12,7 +13,8 @@ import uuid
 import cv2
 import imageio_ffmpeg
 from fastapi import FastAPI, File, HTTPException, UploadFile, Request
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from typing import Literal
 
@@ -116,6 +118,15 @@ def seed_reference(library):
         temporary.replace(target)
     except Exception as exc:  # The app must still start; a reference can be prepared from the browser.
         print(f'Could not rebuild the therapist reference: {exc}',flush=True)
+
+
+def session_response(request, session, **headers):
+    """Session JSON is mostly repetitive landmarks, so compress it for phones."""
+    response=JSONResponse(public_session(session),headers=headers)
+    if len(response.body)>1024 and 'gzip' in request.headers.get('accept-encoding',''):
+        response.body=gzip.compress(response.body,1)
+        response.headers.update({'content-encoding':'gzip','content-length':str(len(response.body)),'vary':'Accept-Encoding'})
+    return response
 
 
 def known_reference(value):
@@ -247,7 +258,7 @@ def create_app():
                 'ai':ai_coach.status(),
                 'referenceId':ref,'referenceModel':m,'referenceUrl':media_url(teacher) if teacher.exists() or (remote.enabled() and remote.exists(teacher)) else None,
                 'sampleUrl':media_url(library/f'patient-{exercise}.mp4') if (library/f'patient-{exercise}.mp4').exists() or (remote.enabled() and remote.exists(library/f'patient-{exercise}.mp4')) else None,
-                'maxUploadMb':int(os.getenv('WATHBA_MAX_UPLOAD_MB','300')),'maxRecordingSeconds':int(os.getenv('WATHBA_MAX_RECORDING_SECONDS','180')),'cameraBitrate':int(os.getenv('WATHBA_CAMERA_BITRATE','2500000')),
+                'maxUploadMb':int(os.getenv('WATHBA_MAX_UPLOAD_MB','300')),'maxRecordingSeconds':int(os.getenv('WATHBA_MAX_RECORDING_SECONDS','180')),'cameraBitrate':int(os.getenv('WATHBA_CAMERA_BITRATE','1500000')),
                 'poster':media_url(poster) if poster.exists() else None}
 
     @app.post('/api/upload')
@@ -266,9 +277,10 @@ def create_app():
         target=folder/'source.mp4'
         try:
             # Normalise webcam WebM metadata and phone orientation before tracking.
-            subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(),'-y','-loglevel','error','-i',str(raw),'-t','181',
-                            '-an','-vf','scale=trunc(iw/2)*2:trunc(ih/2)*2','-c:v','libx264','-preset','veryfast',
-                            '-pix_fmt','yuv420p','-movflags','+faststart',str(target)],check=True,capture_output=True,timeout=120)
+            await run_in_threadpool(subprocess.run,[imageio_ffmpeg.get_ffmpeg_exe(),'-y','-loglevel','error','-i',str(raw),'-t','181','-an',
+                            '-vf',"scale='min(854,iw)':'min(854,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
+                            '-c:v','libx264','-preset','ultrafast','-crf','26','-pix_fmt','yuv420p','-movflags','+faststart',str(target)],
+                            check=True,capture_output=True,timeout=120)
             cap,_,duration=open_video(target);cap.release()
         except (ValueError,subprocess.SubprocessError) as exc:
             target.unlink(missing_ok=True);raise HTTPException(400,'Could not read the recording. Use an MP4/MOV or a camera recording under three minutes.') from exc
@@ -277,7 +289,7 @@ def create_app():
         return {'asset':upload_id,'url':media_url(target),'duration':duration}
 
     @app.post('/api/process')
-    def process(request: TrackingRequest):
+    def process(request: TrackingRequest, http: Request):
         if not request.consent:raise HTTPException(400,'Confirm permission to analyse this recording.')
         if request.reference and reference_locked():raise HTTPException(403,'The therapist reference is locked on this public demo.')
         if request.asset in ('therapist','patient'):
@@ -307,13 +319,14 @@ def create_app():
                     remote.persist_session(s['id']);remote.persist_file(target)
                     return {'id':s['id'],'model':storage.load_reference(s['id'])}
                 remote.persist_session(s['id'])
-                return public_session(s)
+                return session_response(http,s)
             except ValueError as exc:raise HTTPException(400,str(exc)) from exc
 
     @app.get('/api/session/{session_id}')
-    def session(session_id:str):
-        try:return public_session(storage.load(session_id))
+    def session(session_id:str, http: Request):
+        try:s=storage.load(session_id)
         except (OSError,ValueError):raise HTTPException(404,'Session not found.')
+        return session_response(http,s,**({'cache-control':'private, max-age=86400'} if s.get('kind')=='reference' else {}))
 
     @app.post('/api/program')
     def update_program(request: ProgramRequest):
@@ -447,7 +460,8 @@ def create_app():
                 if url:return RedirectResponse(url)
                 target=remote.ensure(relative)
             if not target.is_file():raise FileNotFoundError()
-            return FileResponse(target)
+            # Saved videos and pictures never change, so a browser can keep them.
+            return FileResponse(target,headers={'Cache-Control':'private, max-age=86400'} if target.suffix in ('.mp4','.jpg') else None)
         except (OSError,ValueError):raise HTTPException(404,'Media not found.')
 
     app.mount('/static',StaticFiles(directory=BASE/'web'),name='static')

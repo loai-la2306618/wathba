@@ -66,3 +66,11 @@ export function evaluateLive(pose,context){
  const good=Object.values(parts).some(v=>v.status==='green');
  return {parts,title:good?'Following the reference':'Check camera view',message:good?'Tracked parts are within the current reference tolerance. Keep your assigned pace.':'Step back until your shoulders, knees and feet are visible.'};
 }
+// Green, yellow and red match the skeleton colours.
+export function liveTone(issue,outcome,feedback){
+ if(outcome.calibrating&&!issue)return 'ready';
+ if(outcome.completed&&!outcome.counted)return 'bad';
+ if(issue)return Object.values(feedback.parts||{}).some(part=>part.status==='red')?'bad':'warn';
+ if(outcome.completed)return 'good';
+ return {'Pause and reset':'bad','Check your alignment':'warn','Check camera view':'warn','Following the reference':'good'}[feedback.title]||'ready';
+}

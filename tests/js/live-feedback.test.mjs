@@ -15,7 +15,7 @@ function harness(reference,rows=[],cycles=[]){
  const state={tracking:true,mode:'recording',config:{referenceModel:reference,target:5},referenceRows:rows,referenceCycles:cycles,rows:[],lastSample:-1};
  const context=vm.createContext({state,repCounter:counter,joint,REQUIRED:CONFIG.measurementRequirements.hip_height,
   evaluateLive,measurements,countStatus:{},$:get,rowFrom:(r,t)=>({time:t}),draw(){},setReps(){},currentLang:()=> 'en',
-  performance:{now:()=>time*1000},audioCoach:{update(issue,t,immediate){if(gate.update(issue,t,immediate))alerts.push(issue);}},
+  performance:{now:()=>time*1000},liveTone(){return 'ready';},speakComment(){},coachBanner:{dataset:{}},stopCoaching(){},startVoice(){},audioCoach:{update(issue,t,immediate){if(gate.update(issue,t,immediate))alerts.push(issue);}},
   resetLive(){counter.reset();state.liveTorsoScale=null;state.floorPosition=null;}
  });
  vm.runInContext(logic,context);

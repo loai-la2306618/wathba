@@ -69,6 +69,18 @@ def unload():
                 torch.cuda.empty_cache()
 
 
+def preload():
+    """Load the coach in the background on a GPU, so the first summary does not wait for it."""
+    def run():
+        try:
+            import torch
+            if available('text')[0] and torch.cuda.is_available():
+                load(DEFAULT_TEXT)
+        except Exception as exc:  # A later request retries and shows the reason.
+            print(f'Could not preload Qwen: {exc}', flush=True)
+    threading.Thread(target=run, daemon=True, name='qwen-preload').start()
+
+
 def load(key):
     """Load (or reuse) one model. Returns a bundle dict."""
     if key not in MODELS:

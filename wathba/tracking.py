@@ -11,7 +11,7 @@ import numpy as np
 from . import storage
 from .assessment import pose_features, normalise_frontal_height, valid
 from .inference import DETECTOR_ID, POSE_ID, PoseTracker, models
-from .media import draw_pose, encode_mp4, open_video
+from .media import Mp4Writer, draw_pose, open_video
 
 
 def cache_key(path, plan):
@@ -102,19 +102,20 @@ def measured_samples(record, plan):
 
 
 def render_overlay(source, output, record, samples, progress=lambda *_: None, flags=None, reference=None):
-    """Retain source motion at up to 24 fps; interpolate only the displayed overlay."""
+    """Write the replay at about 15 fps; interpolate only the displayed overlay."""
     cap, source_fps, _duration = open_video(source)
-    stride = max(1, round(source_fps / 24))
+    stride = max(1, round(source_fps / 15))
     fps = source_fps / stride
-    raw = Path(output).with_name("overlay-raw.mp4")
     size = (record["width"], record["height"])
-    writer = cv2.VideoWriter(str(raw), cv2.VideoWriter_fourcc(*"mp4v"), fps, size)
-    if not writer.isOpened():
-        cap.release()
-        raise ValueError("Could not create the annotated video.")
+    writer = Mp4Writer(output, size, fps)
     i, cursor = 0, 0
     try:
         while True:
+            if i % stride:
+                if not cap.grab():  # Skipped frames need no decoding.
+                    break
+                i += 1
+                continue
             ok, frame = cap.read()
             if not ok:
                 break
@@ -150,7 +151,7 @@ def render_overlay(source, output, record, samples, progress=lambda *_: None, fl
                 writer.write(draw_pose(frame, points, scores, s["angle"], t, caption=caption, review=review, parts=parts, reliable=reliable))
             i += 1
     finally:
-        writer.release()
         cap.release()
-    progress(.93, "Encoding the movement overlay.")
-    return encode_mp4(raw, output)
+        progress(.93, "Encoding the movement overlay.")
+        writer.close()
+    return str(output)

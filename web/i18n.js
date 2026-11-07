@@ -22,6 +22,8 @@ const AR = {
   'Counting needs a matching therapist reference. Prepare the reference for the active pose model.': 'العد يحتاج مرجع معالج متوافقًا مع نموذج التتبع الحالي. أعد تجهيز المرجع.',
   'Check your movement': 'راجع حركتك', 'Get ready': 'استعد', 'Reference matched': 'مطابق للمرجع',
   'Sound alerts: on': 'التنبيه الصوتي: مفعّل', 'Sound alerts: muted': 'التنبيه الصوتي: مكتوم',
+  'Voice and sound: on': 'الصوت والنطق: مفعّل', 'Voice and sound: muted': 'الصوت والنطق: مكتوم',
+  'Arabic voice is not available on this device. Comments stay on screen.': 'الصوت العربي غير متاح على هذا الجهاز. ستبقى الملاحظات على الشاشة.',
   'Matched reps': 'التكرارات المطابقة', 'Matched reps played': 'التكرارات المطابقة المعروضة',
   'Matched Reps / Target': 'التكرارات المطابقة / الهدف',
   'Counting paused: keep your whole body and feet visible.': 'العد متوقف: أبقِ جسمك بالكامل وقدميك ظاهرين.',
