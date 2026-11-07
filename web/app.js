@@ -343,11 +343,11 @@ const aiSummaryHtml=r=>r.fixed?`<p class="ai-text" data-no-i18n dir="auto">${esc
  :`<p class="subtle">The model's summary did not pass the automatic checks, so it is not shown.</p>`;
 const aiAnswerHtml=q=>`<div class="ai-q"><b data-no-i18n dir="auto">${esc(q.question)}</b><p data-no-i18n dir="auto">${esc(q.text)}</p></div>`;
 function aiSection(s){
- const ai=state.config?.ai?.text,lang=currentLang(),sum=s.ai?.summary?.[lang],qs=(s.ai?.questions||[]).filter(q=>q.lang===lang).slice(-6);
+ const ai=state.config?.ai?.text,hosted=ai?.backend==='inference-providers',lang=currentLang(),sum=s.ai?.summary?.[lang],qs=(s.ai?.questions||[]).filter(q=>q.lang===lang).slice(-6);
  if(!ai?.available)return `<div class="report-section ai-card"><h2>AI coach</h2><p class="subtle">The AI coach is not available on this server.</p><p class="subtle" data-no-i18n>${esc(ai?.reason||'')}</p></div>`;
  return `<div class="report-section ai-card" id="ai-card"><h2>AI coach</h2>
- <p class="subtle">Written by a Qwen3 model running on the Wathba server, using only your measured results and answers. Every reply is checked automatically. Not medical advice.</p>
- <label class="consent"><input id="ai-consent" type="checkbox">Allow the Qwen3 model on the Wathba server to process this session. Nothing is sent to other services.</label>
+ <p class="subtle">${hosted?'Written by Qwen3-4B through Hugging Face Inference Providers, using only your measured results and answers. Every reply is checked automatically. Not medical advice.':'Written by a Qwen3 model running on the Wathba server, using only your measured results and answers. Every reply is checked automatically. Not medical advice.'}</p>
+ <label class="consent"><input id="ai-consent" type="checkbox">${hosted?'Allow this session’s measurements and your answers to be sent to Hugging Face Inference Providers to write the reply. No video or pictures are sent.':'Allow the Qwen3 model on the Wathba server to process this session. Nothing is sent to other services.'}</label>
  <div id="ai-summary">${sum?aiSummaryHtml(sum):''}</div>
  <button id="ai-summary-run" class="secondary" type="button">${sum?'Write the summary again':'Write my summary'}</button>
  <h3>Ask about this session</h3>
@@ -355,9 +355,10 @@ function aiSection(s){
  <form id="ai-ask" class="ai-ask"><input name="question" maxlength="500" autocomplete="off" placeholder="For example: how many repetitions did I do?" aria-label="Your question"><button class="primary" type="submit">Ask</button></form></div>`;
 }
 function bindAi(s){
- const consent=()=>{if(!$('ai-consent')?.checked)throw Error('Confirm that this session may be processed by the Qwen3 model on the Wathba server.');return true;};
+ const hosted=state.config?.ai?.text?.backend==='inference-providers';
+ const consent=()=>{if(!$('ai-consent')?.checked)throw Error(hosted?'Confirm that this session’s measurements may be sent to Hugging Face Inference Providers.':'Confirm that this session may be processed by the Qwen3 model on the Wathba server.');return true;};
  const store=(kind,result)=>{s.ai??={};if(kind==='summary')(s.ai.summary??={})[result.lang]=result;else if(kind==='question')s.ai.questions=[...(s.ai.questions||[]),result];else s.ai.vision=result;};
- if($('ai-summary-run'))$('ai-summary-run').onclick=safe(async()=>{consent();busy('Writing your summary','The Qwen3 model is reading your session on the Wathba server. The first run loads the model.');
+ if($('ai-summary-run'))$('ai-summary-run').onclick=safe(async()=>{consent();busy('Writing your summary',hosted?'Qwen3-4B is reading your session’s measurements through Hugging Face Inference Providers.':'The Qwen3 model is reading your session on the Wathba server. The first run loads the model.');
   try{const r=await post(`/api/session/${s.id}/ai/summary`,{consent:true,lang:currentLang()});store('summary',r);$('ai-summary').innerHTML=aiSummaryHtml(r);$('ai-summary-run').textContent='Write the summary again';}finally{hideBusy();}});
  if($('ai-ask'))$('ai-ask').onsubmit=safe(async e=>{e.preventDefault();consent();const input=$('ai-ask').elements.question,question=input.value.trim();if(!question)throw Error('Type a question first.');
   const button=$('ai-ask').querySelector('button');button.disabled=true;$('ai-thread').insertAdjacentHTML('beforeend','<p class="subtle ai-wait">Thinking…</p>');
