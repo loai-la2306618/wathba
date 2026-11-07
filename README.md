@@ -96,7 +96,7 @@ Environment variables:
 - `WATHBA_QWEN=0`: disables the AI coach.
 - `WATHBA_OFFLINE=1`: uses only the local model cache.
 
-Only one model is kept in GPU memory at a time. A hosted provider (Hugging Face Inference API) can be added behind `wathba/llm.py` later. It is not enabled, because it would send patient data off the machine.
+When the Space has an `HF_TOKEN` secret, Qwen3-4B runs through Hugging Face Inference Providers, and only the session's numbers and the patient's typed answers are sent. If that call fails, the Space's own GPU runs the same model. Set `WATHBA_QWEN_BACKEND=local` to keep everything on the Space's GPU. Only one local model is kept in GPU memory at a time.
 
 **Benchmark:** `python scripts/benchmark_qwen.py --video frontal-squat.mp4` compares Qwen3-0.6B/1.7B/4B and Qwen3-VL-2B/4B on this machine. Results are in `benchmarks/qwen3/RESULTS.md`. `--rescore` re-applies updated checks to saved outputs without generating them again.
 
