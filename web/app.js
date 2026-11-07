@@ -219,7 +219,7 @@ const liveMessages={
 };
 function liveResult(result,t,finishing=false){
  if((!state.tracking&&state.mode!=='analysing')||state.pausedAt||['busy','stale'].includes(result.status))return;
- if(state.tracking&&t-state.lastSample>=1/6){state.rows.push(rowFrom(result,+t.toFixed(5)));state.lastSample=t;}
+ if(state.tracking&&t-state.lastSample>=1/8){/* Tracking runs on a fixed beat, so a 1/6s gap would really be 1/5s. */state.rows.push(rowFrom(result,+t.toFixed(5)));state.lastSample=t;}
  const pose=result.status==='ok'?(result.display||result.pose):null,height=pose?hipHeight(pose):null;
  const model=state.config.referenceModel,compatible=pose?.model===model?.keypoint_model;
  const depth=height!==null&&repCounter.baseline!==null?height-repCounter.baseline:0;
