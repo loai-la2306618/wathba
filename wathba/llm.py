@@ -1,12 +1,14 @@
-"""Local Qwen3 (text) and Qwen3-VL (vision) inference with transformers.
+"""Qwen3 text generation: Hugging Face Inference Providers first, this machine's GPU as backup.
 
-* Models load lazily from Hugging Face at pinned revisions and run on this
-  machine; patient data is not sent anywhere.
+* WATHBA_QWEN_BACKEND: 'auto' (default) sends the chat to Inference Providers when a
+  Hugging Face token is available and falls back to the local model if that fails;
+  'inference' uses only the provider; 'local' keeps everything on this machine.
+* Only the chat messages are sent: measured session facts and the patient's typed
+  answers. Video and pictures are never sent.
+* Local models load lazily from Hugging Face at pinned revisions.
 * At most one model is resident at a time (an 8 GB laptop GPU cannot hold a
   text and a vision model together); switching unloads the previous one.
 * 4B models load in 4-bit NF4 when the GPU has less than 12 GB.
-* A hosted provider (Hugging Face Inference API) can be added behind the same
-  `generate_text` / `generate_vision` functions later; it is not enabled here.
 """
 
 import importlib.util
@@ -26,6 +28,8 @@ DEFAULT_TEXT = os.getenv('WATHBA_QWEN_TEXT_MODEL', 'qwen3-4b')
 DEFAULT_VISION = os.getenv('WATHBA_QWEN_VISION_MODEL', 'qwen3-vl-4b')
 # Qwen3 recommended sampling for non-thinking use; a fixed seed makes runs repeatable.
 SAMPLING = {'do_sample': True, 'temperature': .7, 'top_p': .8, 'top_k': 20}
+BACKEND = os.getenv('WATHBA_QWEN_BACKEND', 'auto')
+PROVIDER = os.getenv('WATHBA_QWEN_PROVIDER', 'featherless-ai')
 LOCK = threading.RLock()
 _state = {'key': None, 'bundle': None, 'errors': {}, 'load_seconds': {}}
 
@@ -34,9 +38,21 @@ class Unavailable(RuntimeError):
     """The model cannot run here (packages missing, disabled, or failed to load)."""
 
 
+def hosted():
+    """True when text generation should go to Hugging Face Inference Providers."""
+    if BACKEND == 'local' or importlib.util.find_spec('huggingface_hub') is None:
+        return False
+    from huggingface_hub import get_token
+    return bool(get_token())
+
+
 def available(kind='text'):
     if os.getenv('WATHBA_QWEN', '1') == '0':
         return False, 'Qwen3 features are disabled on this server (WATHBA_QWEN=0).'
+    if kind == 'text' and hosted():
+        return True, ''
+    if kind == 'text' and BACKEND == 'inference':
+        return False, 'Qwen3 through Inference Providers needs a Hugging Face token (HF_TOKEN).'
     missing = [m for m in ('torch', 'transformers', 'accelerate') if importlib.util.find_spec(m) is None]
     if missing:
         return False, f"Qwen3 needs optional packages ({', '.join(missing)}). Install requirements-qwen.txt."
@@ -144,8 +160,31 @@ def _run(bundle, inputs, max_new_tokens, seed):
     return new, stats
 
 
+def _generate_hosted(messages, key, max_new_tokens, seed):
+    from huggingface_hub import InferenceClient
+    started = time.perf_counter()
+    out = InferenceClient(provider=PROVIDER, timeout=60).chat_completion(
+        messages=messages, model=MODELS[key]['repo'], max_tokens=max_new_tokens,
+        temperature=SAMPLING['temperature'], top_p=SAMPLING['top_p'], seed=seed)
+    seconds = time.perf_counter() - started
+    usage = getattr(out, 'usage', None)
+    new_tokens = getattr(usage, 'completion_tokens', None)
+    stats = {'model': key, 'repo': MODELS[key]['repo'], 'backend': 'inference-providers', 'device': f'Hugging Face Inference Providers ({PROVIDER})',
+             'precision': None, 'prompt_tokens': getattr(usage, 'prompt_tokens', None), 'new_tokens': new_tokens,
+             'seconds': round(seconds, 3), 'tokens_per_second': round(new_tokens / seconds, 1) if new_tokens and seconds else None,
+             'peak_gpu_mb': None, 'load_seconds': None}
+    return out.choices[0].message.content or '', stats
+
+
 def generate_text(messages, key=None, max_new_tokens=320, seed=0):
     key = key or DEFAULT_TEXT
+    if hosted():
+        try:
+            return _generate_hosted(messages, key, max_new_tokens, seed)
+        except Exception as exc:
+            if BACKEND == 'inference':
+                raise Unavailable(f'Inference Providers could not answer: {exc}') from exc
+            print(f'Inference Providers failed, using the local model: {exc}', flush=True)
     with LOCK:
         bundle = load(key)
         tok = bundle['tokenizer']

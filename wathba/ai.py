@@ -102,4 +102,5 @@ def answer(session, question, lang):
 
 def status():
     text_ok, text_reason = llm.available('text')
-    return {'text': {'available': text_ok, 'reason': text_reason, 'model': llm.MODELS[llm.DEFAULT_TEXT]['repo']}}
+    return {'text': {'available': text_ok, 'reason': text_reason, 'model': llm.MODELS[llm.DEFAULT_TEXT]['repo'],
+                     'backend': 'inference-providers' if llm.hosted() else 'local'}}

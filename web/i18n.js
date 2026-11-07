@@ -4,6 +4,10 @@
 // Switching back restores the original English exactly.
 const KEY = 'wathba-lang';
 const AR = {
+  'Written by Qwen3-4B through Hugging Face Inference Providers, using only your measured results and answers. Every reply is checked automatically. Not medical advice.': 'يكتبه نموذج Qwen3-4B عبر Hugging Face Inference Providers، باستخدام نتائجك المقاسة وإجاباتك فقط. يُفحص كل رد تلقائيًا. ليس نصيحة طبية.',
+  'Allow this session’s measurements and your answers to be sent to Hugging Face Inference Providers to write the reply. No video or pictures are sent.': 'أسمح بإرسال قياسات هذه الجلسة وإجاباتي إلى Hugging Face Inference Providers لكتابة الرد. لا يُرسل أي فيديو أو صور.',
+  'Confirm that this session’s measurements may be sent to Hugging Face Inference Providers.': 'أكّد السماح بإرسال قياسات هذه الجلسة إلى Hugging Face Inference Providers.',
+  'Qwen3-4B is reading your session’s measurements through Hugging Face Inference Providers.': 'يقرأ نموذج Qwen3-4B قياسات جلستك عبر Hugging Face Inference Providers.',
   'Try sample video': 'جرّب الفيديو التجريبي', 'Sample video ready': 'الفيديو التجريبي جاهز', 'Ready to analyse the sample set.': 'جاهز لتحليل الفيديو التجريبي.', 'Loading the sample patient video.': 'جارٍ تحميل الفيديو التجريبي.',
   'Continue exercises': 'كمّل باقي التمارين',
   'Evaluate pain and effort across all exercises you just completed.': 'قيّم الألم والمجهود لكل التمارين اللي خلصتها في الجلسة.',

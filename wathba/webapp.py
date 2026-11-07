@@ -366,7 +366,7 @@ def create_app():
 
     def run_ai(session_id, request, kind, work):
         """Shared consent, availability and storage handling for the Qwen3 features."""
-        if not request.consent:raise HTTPException(400,'Confirm that this session may be processed by the Qwen3 model on the Wathba server.')
+        if not request.consent:raise HTTPException(400,'Confirm that this session’s measurements may be sent to Hugging Face Inference Providers.' if llm.hosted() else 'Confirm that this session may be processed by the Qwen3 model on the Wathba server.')
         ok,reason=llm.available('text')
         if not ok:raise HTTPException(503,reason)
         try:s=storage.load(session_id)
